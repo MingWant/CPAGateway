@@ -325,7 +325,7 @@ func previewApplyMemberOperationToRoutes(members []weightedRoute, body memberOpe
 
 func validatePreviewTokenLocked(body memberOperationRequest) (*previewTokenRecord, error) {
 	if strings.TrimSpace(body.PreviewToken) == "" {
-		return nil, nil
+		return nil, fmt.Errorf("preview token is required; preview the operation first")
 	}
 	record, ok := gatewayState.previewTokens[strings.TrimSpace(body.PreviewToken)]
 	if !ok {

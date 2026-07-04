@@ -27,6 +27,8 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		return interceptBefore(request)
 	case pluginabi.MethodRequestInterceptAfter:
 		return interceptAfter(request)
+	case pluginabi.MethodUsageHandle:
+		return handleUsage(request)
 	case pluginabi.MethodManagementRegister:
 		return okEnvelope(managementRegistration())
 	case pluginabi.MethodManagementHandle:
@@ -89,7 +91,7 @@ func pluginRegistration() registration {
 				Description: "Per API key gateway policies bound to top-level CPA api-keys.",
 			}},
 		},
-		Capabilities: registrationCapability{RequestInterceptor: true, ManagementAPI: true},
+		Capabilities: registrationCapability{RequestInterceptor: true, UsagePlugin: true, ManagementAPI: true},
 	}
 }
 
@@ -148,7 +150,19 @@ func interceptAfter(raw []byte) ([]byte, error) {
 		return nil, err
 	}
 	resp := gatewayState.apply(req, true)
+	if resp.Reject {
+		gatewayState.releaseInflightForRequest(req)
+	}
 	return okEnvelope(resp)
+}
+
+func handleUsage(raw []byte) ([]byte, error) {
+	var record pluginapi.UsageRecord
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return nil, err
+	}
+	gatewayState.recordUsage(record)
+	return okEnvelope(struct{}{})
 }
 
 func handleManagement(raw []byte) ([]byte, error) {

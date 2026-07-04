@@ -43,13 +43,21 @@ func (s *pluginState) apply(req pluginapi.RequestInterceptRequest, afterAuth boo
 }
 
 func (s *pluginState) evaluate(req pluginapi.RequestInterceptRequest, afterAuth bool) dryRunResult {
+	return s.evaluateWithLimits(req, afterAuth, true)
+}
+
+func (s *pluginState) evaluateDryRun(req pluginapi.RequestInterceptRequest) dryRunResult {
+	return s.evaluateWithLimits(req, false, false)
+}
+
+func (s *pluginState) evaluateWithLimits(req pluginapi.RequestInterceptRequest, afterAuth bool, enforce bool) dryRunResult {
 	now := time.Now()
 	policy, keyID, displayName, maskedKey := s.lookupPolicy(req)
 	if !policy.Enabled {
 		resp := withGatewayMetadata(pluginapi.RequestInterceptResponse{Headers: cloneHeader(req.Headers), Body: cloneBytes(req.Body)}, map[string]string{"gateway.policy_id": keyID, "gateway.policy_name": displayName, "gateway.decision": "pass", "gateway.reason": "policy_disabled"})
 		return dryRunResult{Decision: "pass", Reason: "policy_disabled", FinalModel: req.Model, Response: resp}
 	}
-	if reject := s.enforceLimits(keyID, displayName, maskedKey, policy.Limits, now, afterAuth); reject != nil {
+	if reject := s.enforceLimits(keyID, displayName, maskedKey, policy.Limits, now, afterAuth, enforce); reject != nil {
 		resp := withGatewayMetadata(*reject, map[string]string{"gateway.policy_id": keyID, "gateway.policy_name": displayName, "gateway.decision": "reject", "gateway.reason": reject.RejectCode})
 		return dryRunResult{Decision: "reject", Reason: reject.RejectCode, FinalModel: req.Model, Response: resp}
 	}
@@ -80,51 +88,177 @@ func (s *pluginState) lookupPolicy(req pluginapi.RequestInterceptRequest) (polic
 	return clonePolicyConfig(s.config.Default), defaultKeyID, "default", maskKey(apiKey)
 }
 
-func (s *pluginState) enforceLimits(keyID, displayName, maskedKey string, limits limitConfig, now time.Time, afterAuth bool) *pluginapi.RequestInterceptResponse {
+func (s *pluginState) enforceLimits(keyID, displayName, maskedKey string, limits limitConfig, now time.Time, afterAuth bool, enforce bool) *pluginapi.RequestInterceptResponse {
 	if keyID == "" {
 		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	entry := s.usage[keyID]
-	if entry == nil {
-		entry = &usageCounter{DisplayName: displayName, MaskedKey: maskedKey}
-		s.usage[keyID] = entry
-	}
-	entry.DisplayName = displayName
-	entry.MaskedKey = maskedKey
-	entry.LastSeenAt = now
-	today := now.Format("2006-01-02")
-	if entry.DayBucket != today {
-		entry.RequestsToday = 0
-		entry.DayBucket = today
 	}
 	if !withinAbsoluteWindow(limits, now) || !withinSchedules(limits.Schedules, now) {
 		return &pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusForbidden, RejectMessage: "gateway schedule rejected request", RejectCode: "gateway_schedule_denied"}
 	}
-	window := pruneRecent(s.requestWindow[keyID], now.Add(-time.Minute))
-	s.requestWindow[keyID] = window
-	if !afterAuth {
-		if limits.RequestsPerMin > 0 && len(window) >= limits.RequestsPerMin {
-			return &pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusTooManyRequests, RejectMessage: "gateway rate limit exceeded", RejectCode: "gateway_rate_limit_exceeded"}
-		}
-		if limits.RequestsPerDay > 0 && entry.RequestsToday >= limits.RequestsPerDay {
-			return &pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusForbidden, RejectMessage: "gateway daily quota exceeded", RejectCode: "gateway_quota_exceeded"}
-		}
-		if limits.MaxInflight > 0 && entry.Inflight >= limits.MaxInflight {
-			return &pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusTooManyRequests, RejectMessage: "gateway concurrency limit exceeded", RejectCode: "gateway_concurrency_exceeded"}
-		}
-		entry.RequestsToday++
-		entry.RequestsMinute = len(window) + 1
-		entry.Inflight++
-		s.requestWindow[keyID] = append(window, now)
+	if afterAuth {
 		return nil
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if enforce {
+		if s.usage == nil {
+			s.usage = make(map[string]*usageCounter)
+		}
+		if s.requestWindow == nil {
+			s.requestWindow = make(map[string][]time.Time)
+		}
+	}
+	entry := s.usage[keyID]
+	if entry == nil && enforce {
+		entry = &usageCounter{DisplayName: displayName, MaskedKey: maskedKey}
+		s.usage[keyID] = entry
+	}
+	today := now.Format("2006-01-02")
+	requestsToday := 0
+	tokensToday := int64(0)
+	inflight := 0
+	if entry != nil {
+		requestsToday = entry.RequestsToday
+		tokensToday = entry.TokensToday
+		inflight = entry.Inflight
+		if entry.DayBucket != today {
+			requestsToday = 0
+			tokensToday = 0
+		}
+	}
+	window := pruneRecent(append([]time.Time(nil), s.requestWindow[keyID]...), now.Add(-time.Minute))
+	if enforce {
+		s.requestWindow[keyID] = window
+	}
+	if limits.RequestsPerMin > 0 && len(window) >= limits.RequestsPerMin {
+		return &pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusTooManyRequests, RejectMessage: "gateway rate limit exceeded", RejectCode: "gateway_rate_limit_exceeded"}
+	}
+	if limits.RequestsPerDay > 0 && requestsToday >= limits.RequestsPerDay {
+		return &pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusForbidden, RejectMessage: "gateway daily quota exceeded", RejectCode: "gateway_quota_exceeded"}
+	}
+	if limits.TokensPerDay > 0 && tokensToday >= int64(limits.TokensPerDay) {
+		return &pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusForbidden, RejectMessage: "gateway token quota exceeded", RejectCode: "gateway_token_quota_exceeded"}
+	}
+	if limits.MaxInflight > 0 && inflight >= limits.MaxInflight {
+		return &pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusTooManyRequests, RejectMessage: "gateway concurrency limit exceeded", RejectCode: "gateway_concurrency_exceeded"}
+	}
+	if !enforce {
+		return nil
+	}
+	entry.DisplayName = displayName
+	entry.MaskedKey = maskedKey
+	entry.LastSeenAt = now
+	entry.DayBucket = today
+	entry.RequestsToday = requestsToday + 1
+	entry.TokensToday = tokensToday
+	entry.RequestsMinute = len(window) + 1
+	entry.Inflight = inflight + 1
+	s.requestWindow[keyID] = append(window, now)
+	return nil
+}
+
+func (s *pluginState) requestIdentity(req pluginapi.RequestInterceptRequest) (keyID, displayName, maskedKey string) {
+	apiKey := strings.TrimSpace(stringMetadata(req.Metadata, "access.api_key"))
+	requestedKeyID := firstNonEmpty(stringMetadata(req.Metadata, "access.key_id"), stringMetadata(req.Metadata, "gateway.key_id"))
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if requestedKeyID != "" {
+		for _, candidate := range s.config.KeyPolicies {
+			if candidateKeyID(candidate) != requestedKeyID {
+				continue
+			}
+			return requestedKeyID, candidate.DisplayName, maskKey(firstNonEmpty(candidate.MatchAPIKey, apiKey))
+		}
+		return requestedKeyID, "default", maskKey(apiKey)
+	}
+	for _, candidate := range s.config.KeyPolicies {
+		if strings.TrimSpace(candidate.MatchAPIKey) == "" || candidate.MatchAPIKey != apiKey {
+			continue
+		}
+		return candidateKeyID(candidate), candidate.DisplayName, maskKey(candidate.MatchAPIKey)
+	}
+	return stableKeyID(apiKey), "default", maskKey(apiKey)
+}
+
+func (s *pluginState) usageIdentity(apiKey string) (keyID, displayName, maskedKey string) {
+	apiKey = strings.TrimSpace(apiKey)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, candidate := range s.config.KeyPolicies {
+		if strings.TrimSpace(candidate.MatchAPIKey) == "" || strings.TrimSpace(candidate.MatchAPIKey) != apiKey {
+			continue
+		}
+		return candidateKeyID(candidate), candidate.DisplayName, maskKey(candidate.MatchAPIKey)
+	}
+	return stableKeyID(apiKey), "default", maskKey(apiKey)
+}
+
+func (s *pluginState) releaseInflightForRequest(req pluginapi.RequestInterceptRequest) {
+	keyID, displayName, maskedKey := s.requestIdentity(req)
+	s.releaseInflight(keyID, displayName, maskedKey, time.Now(), 0)
+}
+
+func (s *pluginState) recordUsage(record pluginapi.UsageRecord) {
+	keyID, displayName, maskedKey := s.usageIdentity(record.APIKey)
+	s.releaseInflight(keyID, displayName, maskedKey, time.Now(), usageTotalTokens(record.Detail))
+}
+
+func (s *pluginState) releaseInflight(keyID, displayName, maskedKey string, now time.Time, tokens int64) {
+	keyID = strings.TrimSpace(keyID)
+	if keyID == "" {
+		return
+	}
+	if tokens < 0 {
+		tokens = 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.usage == nil {
+		s.usage = make(map[string]*usageCounter)
+	}
+	if s.requestWindow == nil {
+		s.requestWindow = make(map[string][]time.Time)
+	}
+	entry := s.usage[keyID]
+	if entry == nil {
+		entry = &usageCounter{}
+		s.usage[keyID] = entry
+	}
+	if strings.TrimSpace(displayName) != "" {
+		entry.DisplayName = strings.TrimSpace(displayName)
+	}
+	if strings.TrimSpace(maskedKey) != "" {
+		entry.MaskedKey = strings.TrimSpace(maskedKey)
+	}
+	today := now.Format("2006-01-02")
+	if entry.DayBucket != today {
+		entry.RequestsToday = 0
+		entry.TokensToday = 0
+		entry.DayBucket = today
+	}
+	entry.LastSeenAt = now
 	if entry.Inflight > 0 {
 		entry.Inflight--
 	}
+	entry.TokensToday += tokens
+	window := pruneRecent(append([]time.Time(nil), s.requestWindow[keyID]...), now.Add(-time.Minute))
+	s.requestWindow[keyID] = window
 	entry.RequestsMinute = len(window)
-	return nil
+}
+
+func usageTotalTokens(detail pluginapi.UsageDetail) int64 {
+	if detail.TotalTokens > 0 {
+		return detail.TotalTokens
+	}
+	total := detail.InputTokens + detail.OutputTokens + detail.ReasoningTokens
+	if total > 0 {
+		return total
+	}
+	total = detail.CachedTokens + detail.CacheReadTokens + detail.CacheCreationTokens
+	if total < 0 {
+		return 0
+	}
+	return total
 }
 
 func (s *pluginState) listKeys() []map[string]any {
@@ -143,7 +277,7 @@ func (s *pluginState) listUsage() []usageEntry {
 	out := make([]usageEntry, 0, len(s.usage))
 	for keyID, entry := range s.usage {
 		window := pruneRecent(append([]time.Time(nil), s.requestWindow[keyID]...), time.Now().Add(-time.Minute))
-		out = append(out, usageEntry{KeyID: keyID, DisplayName: entry.DisplayName, MaskedKey: entry.MaskedKey, RequestsToday: entry.RequestsToday, RequestsMinute: len(window), Inflight: entry.Inflight, LastSeenAt: entry.LastSeenAt})
+		out = append(out, usageEntry{KeyID: keyID, DisplayName: entry.DisplayName, MaskedKey: entry.MaskedKey, RequestsToday: entry.RequestsToday, TokensToday: entry.TokensToday, RequestsMinute: len(window), Inflight: entry.Inflight, LastSeenAt: entry.LastSeenAt})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].KeyID < out[j].KeyID })
 	return out

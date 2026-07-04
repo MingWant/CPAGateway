@@ -56,6 +56,46 @@ func TestPluginStateEnforcesPerMinuteLimit(t *testing.T) {
 	}
 }
 
+func TestRouteDryRunDoesNotMutateUsage(t *testing.T) {
+	gatewayState = newPluginState()
+	gatewayState.config = pluginConfig{Default: policyConfig{Enabled: true, Limits: limitConfig{RequestsPerDay: 1, RequestsPerMin: 1, MaxInflight: 1}}}
+	body, err := json.Marshal(pluginapi.RequestInterceptRequest{Model: "gpt-5.5", Headers: http.Header{}, Metadata: map[string]any{"access.api_key": "abc"}})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		resp, err := routeDryRun(pluginapi.ManagementRequest{Body: body})
+		if err != nil || resp.StatusCode != http.StatusOK {
+			t.Fatalf("routeDryRun(%d) = %#v, %v", i, resp, err)
+		}
+	}
+	if _, ok := gatewayState.usage[stableKeyID("abc")]; ok {
+		t.Fatalf("dry-run created usage entry: %#v", gatewayState.usage[stableKeyID("abc")])
+	}
+	if got := len(gatewayState.requestWindow[stableKeyID("abc")]); got != 0 {
+		t.Fatalf("dry-run request window len = %d, want 0", got)
+	}
+}
+
+func TestPluginStateEnforcesTokenQuotaAfterUsage(t *testing.T) {
+	state := newPluginState()
+	state.config = pluginConfig{Default: policyConfig{Enabled: true, Limits: limitConfig{TokensPerDay: 10}}}
+	req := pluginapi.RequestInterceptRequest{Headers: http.Header{}, Body: []byte(`{"model":"gpt-5.5"}`), Metadata: map[string]any{"access.api_key": "abc"}}
+	first := state.apply(req, false)
+	if first.Reject {
+		t.Fatalf("first request rejected unexpectedly: %#v", first)
+	}
+	state.recordUsage(pluginapi.UsageRecord{APIKey: "abc", Detail: pluginapi.UsageDetail{TotalTokens: 11}})
+	usage := state.usage[stableKeyID("abc")]
+	if usage == nil || usage.Inflight != 0 || usage.TokensToday != 11 {
+		t.Fatalf("usage after record = %#v, want inflight 0 and 11 tokens", usage)
+	}
+	second := state.apply(req, false)
+	if !second.Reject || second.RejectCode != "gateway_token_quota_exceeded" {
+		t.Fatalf("second request = %#v, want token quota reject", second)
+	}
+}
+
 func TestApplyRulesReturnsDecisionAndRouteToModel(t *testing.T) {
 	policy := policyConfig{Enabled: true, Rules: []ruleConfig{{ID: "route-1", Enabled: true, OnMatch: "stop", Match: matchConfig{Models: []string{"gpt-5.5"}}, Actions: actionConfig{RouteToModel: "openai/gpt-5.4"}}}}
 	result := applyRules(pluginapi.RequestInterceptRequest{Model: "gpt-5.5", Headers: http.Header{}, Body: []byte(`{"model":"gpt-5.5"}`)}, policy, false, time.Now())
@@ -202,7 +242,7 @@ func TestMatchRuleSupportsPathHeaderAndMetadataConditions(t *testing.T) {
 	}
 }
 
-func TestPluginStateAfterAuthReleasesInflight(t *testing.T) {
+func TestPluginStateUsageRecordReleasesInflight(t *testing.T) {
 	state := newPluginState()
 	state.config = pluginConfig{Default: policyConfig{Enabled: true, Limits: limitConfig{MaxInflight: 1}}}
 	req := pluginapi.RequestInterceptRequest{Headers: http.Header{}, Body: []byte(`{"model":"gpt-5.5"}`), Metadata: map[string]any{"access.api_key": "abc"}}
@@ -217,8 +257,15 @@ func TestPluginStateAfterAuthReleasesInflight(t *testing.T) {
 	if second.Reject {
 		t.Fatalf("after-auth rejected unexpectedly: %#v", second)
 	}
+	if got := state.usage[stableKeyID("abc")].Inflight; got != 1 {
+		t.Fatalf("inflight after after-auth = %d, want 1 until usage record", got)
+	}
+	state.recordUsage(pluginapi.UsageRecord{APIKey: "abc", Detail: pluginapi.UsageDetail{InputTokens: 2, OutputTokens: 3}})
 	if got := state.usage[stableKeyID("abc")].Inflight; got != 0 {
-		t.Fatalf("inflight after release = %d, want 0", got)
+		t.Fatalf("inflight after usage record = %d, want 0", got)
+	}
+	if got := state.usage[stableKeyID("abc")].TokensToday; got != 5 {
+		t.Fatalf("tokens today = %d, want 5", got)
 	}
 }
 
@@ -333,6 +380,25 @@ func TestRoutePutPoliciesPreservesExistingSecretForSanitizedPayload(t *testing.T
 	}
 	if got := gatewayState.config.KeyPolicies[0].MatchAPIKey; got != "secret-1" {
 		t.Fatalf("preserved secret = %q, want secret-1", got)
+	}
+}
+
+func TestRouteImportPoliciesPreservesExistingSecretForSanitizedBundle(t *testing.T) {
+	gatewayState = newPluginState()
+	gatewayState.config = pluginConfig{KeyPolicies: []keyPolicyConfig{{KeyID: "policy-1", DisplayName: "Key 1", MatchAPIKey: "secret-1", Enabled: true}}}
+	exportResp, err := routeExportPolicies(pluginapi.ManagementRequest{})
+	if err != nil || exportResp.StatusCode != http.StatusOK {
+		t.Fatalf("routeExportPolicies() = %#v, %v", exportResp, err)
+	}
+	if contains(string(exportResp.Body), "secret-1") {
+		t.Fatalf("routeExportPolicies leaked raw key: %s", exportResp.Body)
+	}
+	importResp, err := routeImportPolicies(pluginapi.ManagementRequest{Query: map[string][]string{"mode": {"merge"}}, Body: exportResp.Body})
+	if err != nil || importResp.StatusCode != http.StatusOK {
+		t.Fatalf("routeImportPolicies() = %#v, %v", importResp, err)
+	}
+	if got := gatewayState.config.KeyPolicies[0].MatchAPIKey; got != "secret-1" {
+		t.Fatalf("import preserved secret = %q, want secret-1", got)
 	}
 }
 
@@ -680,11 +746,45 @@ func stringIndex(s, sep string) int {
 	return -1
 }
 
+func applyMemberOperationForTest(t *testing.T, body string) (pluginapi.ManagementResponse, error) {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		t.Fatalf("unmarshal member operation payload: %v", err)
+	}
+	payload["preview_only"] = true
+	previewBody, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal preview payload: %v", err)
+	}
+	previewResp, err := routeMemberPreview(pluginapi.ManagementRequest{Body: previewBody})
+	if err != nil {
+		t.Fatalf("routeMemberPreview() err = %v", err)
+	}
+	if previewResp.StatusCode != http.StatusOK {
+		t.Fatalf("routeMemberPreview() status = %d, body = %s", previewResp.StatusCode, previewResp.Body)
+	}
+	var preview memberOperationPreview
+	if err := json.Unmarshal(previewResp.Body, &preview); err != nil {
+		t.Fatalf("unmarshal member operation preview: %v", err)
+	}
+	if preview.PreviewToken == "" {
+		t.Fatal("routeMemberPreview() returned empty preview token")
+	}
+	payload["preview_token"] = preview.PreviewToken
+	delete(payload, "preview_only")
+	applyBody, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal apply payload: %v", err)
+	}
+	return routeMemberOperation(pluginapi.ManagementRequest{Body: applyBody})
+}
+
 func TestRouteMemberOperationUpdatesWeightsAndPoolStates(t *testing.T) {
 	gatewayState = newPluginState()
 	gatewayState.config = normalizeConfig(pluginConfig{KeyPolicies: []keyPolicyConfig{{KeyID: "policy-1", DisplayName: "Policy 1", Enabled: true, Rules: []ruleConfig{{ID: "rule-1", Enabled: true, Priority: 10, Stage: "route", OnMatch: "stop", Match: matchConfig{Models: []string{"gpt-5.5"}}, Actions: actionConfig{RoutePool: &routePoolConfig{Name: "primary", Mode: "weighted", Members: []weightedRoute{{Model: "openai/gpt-5.4", Weight: 90, Priority: 100, Health: 100, TrafficCap: 100}, {Model: "codex/gpt-5.4", Weight: 10, Priority: 100, Health: 100, TrafficCap: 100}}}}}}}}})
 
-	resp, err := routeMemberOperation(pluginapi.ManagementRequest{Body: []byte(`{"key_id":"policy-1","rule_id":"rule-1","member":"openai/gpt-5.4","operation":"weight-up","delta":5}`)})
+	resp, err := applyMemberOperationForTest(t, `{"key_id":"policy-1","rule_id":"rule-1","member":"openai/gpt-5.4","operation":"weight-up","delta":5}`)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("weight-up = %#v, %v", resp, err)
 	}
@@ -693,7 +793,7 @@ func TestRouteMemberOperationUpdatesWeightsAndPoolStates(t *testing.T) {
 		t.Fatalf("weight after weight-up = %d, want 95", member.Weight)
 	}
 
-	resp, err = routeMemberOperation(pluginapi.ManagementRequest{Body: []byte(`{"key_id":"policy-1","rule_id":"rule-1","operation":"pool-drain"}`)})
+	resp, err = applyMemberOperationForTest(t, `{"key_id":"policy-1","rule_id":"rule-1","operation":"pool-drain"}`)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("pool-drain = %#v, %v", resp, err)
 	}
@@ -703,7 +803,7 @@ func TestRouteMemberOperationUpdatesWeightsAndPoolStates(t *testing.T) {
 		}
 	}
 
-	resp, err = routeMemberOperation(pluginapi.ManagementRequest{Body: []byte(`{"key_id":"policy-1","rule_id":"rule-1","operation":"canary-split","member":"openai/gpt-5.4","secondary":"codex/gpt-5.4","primary_weight":80,"canary_weight":20}`)})
+	resp, err = applyMemberOperationForTest(t, `{"key_id":"policy-1","rule_id":"rule-1","operation":"canary-split","member":"openai/gpt-5.4","secondary":"codex/gpt-5.4","primary_weight":80,"canary_weight":20}`)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("canary-split = %#v, %v", resp, err)
 	}
@@ -717,7 +817,7 @@ func TestRouteMemberOperationAppendsOperatorAudit(t *testing.T) {
 	gatewayState = newPluginState()
 	gatewayState.config = normalizeConfig(pluginConfig{KeyPolicies: []keyPolicyConfig{{KeyID: "policy-audit", DisplayName: "Audit Policy", Enabled: true, Rules: []ruleConfig{{ID: "rule-audit", Enabled: true, Priority: 10, Stage: "route", OnMatch: "stop", Match: matchConfig{Models: []string{"gpt-5.5"}}, Actions: actionConfig{RoutePool: &routePoolConfig{Name: "primary", Mode: "weighted", Members: []weightedRoute{{Model: "openai/gpt-5.4", Weight: 100, Priority: 100, Health: 100, TrafficCap: 100}, {Model: "codex/gpt-5.4", Weight: 0, Priority: 100, Health: 100, TrafficCap: 100}}}}}}}}})
 
-	resp, err := routeMemberOperation(pluginapi.ManagementRequest{Body: []byte(`{"key_id":"policy-audit","rule_id":"rule-audit","member":"openai/gpt-5.4","secondary":"codex/gpt-5.4","operation":"canary-split","primary_weight":95,"canary_weight":5,"reason":"operator-check"}`)})
+	resp, err := applyMemberOperationForTest(t, `{"key_id":"policy-audit","rule_id":"rule-audit","member":"openai/gpt-5.4","secondary":"codex/gpt-5.4","operation":"canary-split","primary_weight":95,"canary_weight":5,"reason":"operator-check"}`)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("routeMemberOperation() = %#v, %v", resp, err)
 	}
@@ -759,6 +859,14 @@ func TestRouteMemberOperationValidatesPreviewToken(t *testing.T) {
 	}
 	if preview.PreviewToken == "" {
 		t.Fatal("expected preview token")
+	}
+
+	missingResp, err := routeMemberOperation(pluginapi.ManagementRequest{Body: []byte(`{"key_id":"policy-preview","rule_id":"rule-preview","operation":"pool-drain","reason":"pool-drain"}`)})
+	if err != nil {
+		t.Fatalf("routeMemberOperation missing token err = %v", err)
+	}
+	if missingResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("missing token status = %d, want %d", missingResp.StatusCode, http.StatusForbidden)
 	}
 
 	badResp, err := routeMemberOperation(pluginapi.ManagementRequest{Body: []byte(`{"key_id":"policy-preview","rule_id":"rule-preview","operation":"pool-drain","reason":"pool-drain","preview_token":"bad-token"}`)})

@@ -69,9 +69,9 @@ func routeImportPolicies(req pluginapi.ManagementRequest) (pluginapi.ManagementR
 	if mode == "" {
 		mode = "merge"
 	}
-	incoming := normalizeKeyPolicies(body.KeyPolicies)
 	gatewayState.mu.Lock()
 	defer gatewayState.mu.Unlock()
+	incoming := normalizeKeyPolicies(gatewayState.preservePolicySecretsLocked(body.KeyPolicies))
 	if mode == "replace" {
 		gatewayState.config.Default = normalizePolicy(body.DefaultPolicy)
 		gatewayState.config.KeyPolicies = incoming
@@ -582,6 +582,6 @@ func routeDryRun(req pluginapi.ManagementRequest) (pluginapi.ManagementResponse,
 	if err := json.Unmarshal(req.Body, &body); err != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
-	result := gatewayState.evaluate(body, false)
+	result := gatewayState.evaluateDryRun(body)
 	return jsonResponse(http.StatusOK, result)
 }

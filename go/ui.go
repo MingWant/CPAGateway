@@ -167,6 +167,8 @@ const api = {
   dryRun: '/v0/management/plugins/gateway/dry-run'
 };
 const el = id => document.getElementById(id);
+const safeApplyInput = el('poolSafeApplyInput');
+if(safeApplyInput){ safeApplyInput.value = 'true'; safeApplyInput.disabled = true; }
 const initialURLState = readURLState();
 let state = { keys: [], usage: [], audit: [], auditSummary: { total_by_decision: {}, total_by_reason: {}, total_by_rule: {}, total_by_policy: {}, total_by_model: {} }, templates: [], policies: { key_policies: [], default_policy: {} }, selectedKeyId: initialURLState.keyId || '', selectedRuleId: initialURLState.ruleId || '', focusedPreviewLabel: initialURLState.previewLabel || '', focusedPreviewType: initialURLState.previewType || '', latestPoolPreviewToken: '', weightedRoutes: [], failoverHops: [], memberHitCounts: {}, ruleHitCounts: {}, stageHitCounts: {}, memberHitCountsLast5m: {}, ruleHitCountsLast5m: {}, stageHitCountsLast5m: {}, memberHitCountsLastHour: {}, ruleHitCountsLastHour: {}, stageHitCountsLastHour: {}, memberHitCountsLast24h: {}, ruleHitCountsLast24h: {}, stageHitCountsLast24h: {}, statsWindow: initialURLState.statsWindow || '1h', collapsedTopology: Object.keys(initialURLState.collapsedTopology || {}).length ? initialURLState.collapsedTopology : loadCollapsedTopology() };
 function log(msg, kind='ok'){ el('logBox').textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg; el('logBox').style.color = kind === 'bad' ? '#ffb4ab' : '#9ff3e8'; }
@@ -735,7 +737,7 @@ function renderPoolHealth(){
       }
       try {
         if(!state.selectedKeyId || !state.selectedRuleId){ throw new Error('Select a rule before applying member operations.'); }
-        await readJSON(api.routeMemberOp, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key_id: state.selectedKeyId, rule_id: state.selectedRuleId, member: label, operation: op, delta: 10, reason: op === 'drain' ? 'manual-drain' : (op === 'offline' ? 'manual-offline' : '') })});
+        await previewThenApply({ key_id: state.selectedKeyId, rule_id: state.selectedRuleId, member: label, operation: op, delta: 10, reason: op === 'drain' ? 'manual-drain' : (op === 'offline' ? 'manual-offline' : '') });
         await refreshAll();
         const refreshedPolicy = selectedPolicy();
         const refreshedRule = (refreshedPolicy?.rules || []).find(item => item.id === state.selectedRuleId);
@@ -1369,15 +1371,17 @@ function renderPoolPreview(result){
   if(el('poolPreviewTokenInput')) el('poolPreviewTokenInput').value = state.latestPoolPreviewToken;
 }
 
-function poolApplyGuardPayload(payload){
-  const safeApply = el('poolSafeApplyInput')?.value === 'true';
-  if(safeApply && !state.latestPoolPreviewToken){
-    throw new Error('Safe Apply is enabled. Run preview first.');
+async function previewThenApply(payload){
+  const previewPayload = {...payload, preview_only: true};
+  const preview = await readJSON(api.routeMemberPreview, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(previewPayload)});
+  renderPoolPreview(preview);
+  const token = preview?.preview_token || '';
+  if(!token){
+    throw new Error('Preview did not return a token.');
   }
-  if(safeApply){
-    payload.preview_token = state.latestPoolPreviewToken;
-  }
-  return payload;
+  const applyPayload = {...payload, preview_token: token};
+  delete applyPayload.preview_only;
+  return readJSON(api.routeMemberOp, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(applyPayload)});
 }
 
 async function runPoolPreview(action){
@@ -1407,7 +1411,7 @@ el('poolPreviewRestoreBtn').addEventListener('click', async () => {
 el('poolDrainBtn').addEventListener('click', async () => {
   try {
     if(!state.selectedKeyId || !state.selectedRuleId){ throw new Error('Select a route rule first.'); }
-    await readJSON(api.routeMemberOp, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(poolApplyGuardPayload({ key_id: state.selectedKeyId, rule_id: state.selectedRuleId, operation: 'pool-drain', reason: 'pool-drain' }))});
+    await previewThenApply({ key_id: state.selectedKeyId, rule_id: state.selectedRuleId, operation: 'pool-drain', reason: 'pool-drain' });
     await refreshAll();
     const rule = (selectedPolicy()?.rules || []).find(item => item.id === state.selectedRuleId);
     if(rule){ hydrateRule(rule); }
@@ -1417,7 +1421,7 @@ el('poolDrainBtn').addEventListener('click', async () => {
 el('poolResumeBtn').addEventListener('click', async () => {
   try {
     if(!state.selectedKeyId || !state.selectedRuleId){ throw new Error('Select a route rule first.'); }
-    await readJSON(api.routeMemberOp, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(poolApplyGuardPayload({ key_id: state.selectedKeyId, rule_id: state.selectedRuleId, operation: 'pool-resume', reason: 'pool-resume' }))});
+    await previewThenApply({ key_id: state.selectedKeyId, rule_id: state.selectedRuleId, operation: 'pool-resume', reason: 'pool-resume' });
     await refreshAll();
     const rule = (selectedPolicy()?.rules || []).find(item => item.id === state.selectedRuleId);
     if(rule){ hydrateRule(rule); }
@@ -1432,7 +1436,7 @@ el('poolCanaryBtn').addEventListener('click', async () => {
     const primary = members[0].model || ((members[0].provider || '-') + '/' + (members[0].suffix || '-'));
     const secondary = el('poolCanarySecondaryInput').value.trim() || (members[1].model || ((members[1].provider || '-') + '/' + (members[1].suffix || '-')));
     const canaryPercent = Math.min(99, Math.max(1, Number(el('poolCanaryPercentInput').value || 10)));
-    await readJSON(api.routeMemberOp, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(poolApplyGuardPayload({ key_id: state.selectedKeyId, rule_id: state.selectedRuleId, operation: 'canary-split', member: primary, secondary, primary_weight: 100 - canaryPercent, canary_weight: canaryPercent, reason: 'canary-split' }))});
+    await previewThenApply({ key_id: state.selectedKeyId, rule_id: state.selectedRuleId, operation: 'canary-split', member: primary, secondary, primary_weight: 100 - canaryPercent, canary_weight: canaryPercent, reason: 'canary-split' });
     await refreshAll();
     const rule = (selectedPolicy()?.rules || []).find(item => item.id === state.selectedRuleId);
     if(rule){ hydrateRule(rule); }
@@ -1442,7 +1446,7 @@ el('poolCanaryBtn').addEventListener('click', async () => {
 el('poolRebalanceBtn').addEventListener('click', async () => {
   try {
     if(!state.selectedKeyId || !state.selectedRuleId){ throw new Error('Select a route rule first.'); }
-    await readJSON(api.routeMemberOp, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(poolApplyGuardPayload({ key_id: state.selectedKeyId, rule_id: state.selectedRuleId, operation: 'rebalance-by-health', reason: 'rebalance-by-health' }))});
+    await previewThenApply({ key_id: state.selectedKeyId, rule_id: state.selectedRuleId, operation: 'rebalance-by-health', reason: 'rebalance-by-health' });
     await refreshAll();
     const rule = (selectedPolicy()?.rules || []).find(item => item.id === state.selectedRuleId);
     if(rule){ hydrateRule(rule); }
@@ -1452,7 +1456,7 @@ el('poolRebalanceBtn').addEventListener('click', async () => {
 el('poolRestoreBtn').addEventListener('click', async () => {
   try {
     if(!state.selectedKeyId || !state.selectedRuleId){ throw new Error('Select a route rule first.'); }
-    await readJSON(api.routeMemberOp, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(poolApplyGuardPayload({ key_id: state.selectedKeyId, rule_id: state.selectedRuleId, operation: 'restore-default-weights', reason: 'restore-default-weights' }))});
+    await previewThenApply({ key_id: state.selectedKeyId, rule_id: state.selectedRuleId, operation: 'restore-default-weights', reason: 'restore-default-weights' });
     await refreshAll();
     const rule = (selectedPolicy()?.rules || []).find(item => item.id === state.selectedRuleId);
     if(rule){ hydrateRule(rule); }
@@ -1465,7 +1469,7 @@ el('poolShiftProviderBtn').addEventListener('click', async () => {
     const provider = el('poolShiftProviderInput').value.trim();
     if(!provider){ throw new Error('Enter a provider to shift traffic to.'); }
     const percent = Math.min(100, Math.max(1, Number(el('poolShiftPercentInput').value || 50)));
-    await readJSON(api.routeMemberOp, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(poolApplyGuardPayload({ key_id: state.selectedKeyId, rule_id: state.selectedRuleId, operation: 'shift-provider-traffic', secondary: provider, canary_weight: percent, reason: 'shift-provider-traffic' }))});
+    await previewThenApply({ key_id: state.selectedKeyId, rule_id: state.selectedRuleId, operation: 'shift-provider-traffic', secondary: provider, canary_weight: percent, reason: 'shift-provider-traffic' });
     await refreshAll();
     const rule = (selectedPolicy()?.rules || []).find(item => item.id === state.selectedRuleId);
     if(rule){ hydrateRule(rule); }

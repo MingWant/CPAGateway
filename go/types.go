@@ -31,6 +31,7 @@ type registration struct {
 
 type registrationCapability struct {
 	RequestInterceptor bool `json:"request_interceptor"`
+	UsagePlugin        bool `json:"usage_plugin"`
 	ManagementAPI      bool `json:"management_api"`
 }
 
@@ -190,6 +191,7 @@ type usageEntry struct {
 	DisplayName    string    `json:"display_name"`
 	MaskedKey      string    `json:"masked_key"`
 	RequestsToday  int       `json:"requests_today"`
+	TokensToday    int64     `json:"tokens_today"`
 	RequestsMinute int       `json:"requests_minute"`
 	Inflight       int       `json:"inflight"`
 	LastSeenAt     time.Time `json:"last_seen_at,omitempty"`
@@ -263,6 +265,7 @@ type usageCounter struct {
 	DisplayName    string
 	MaskedKey      string
 	RequestsToday  int
+	TokensToday    int64
 	RequestsMinute int
 	Inflight       int
 	LastSeenAt     time.Time
