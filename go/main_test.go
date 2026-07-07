@@ -12,6 +12,47 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
+func TestManagementRegistrationForRPCIsSerializableAndExposesUIResource(t *testing.T) {
+	reg := managementRegistrationForRPC()
+	if _, err := json.Marshal(reg); err != nil {
+		t.Fatalf("managementRegistrationForRPC marshal error = %v", err)
+	}
+	if len(reg.Resources) != 1 || reg.Resources[0].Path != "/ui" || reg.Resources[0].Menu != "Gateway" {
+		t.Fatalf("resources = %#v, want Gateway /ui resource", reg.Resources)
+	}
+	if reg.Resources[0].Handler != nil {
+		t.Fatal("RPC resource handler must be nil")
+	}
+}
+
+func TestHandleManagementServesUIResourcePath(t *testing.T) {
+	rawReq, err := json.Marshal(pluginapi.ManagementRequest{
+		Method: http.MethodGet,
+		Path:   "/v0/resource/plugins/gateway/ui",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawResp, err := handleManagement(rawReq)
+	if err != nil {
+		t.Fatalf("handleManagement() error = %v", err)
+	}
+	var env envelope
+	if err := json.Unmarshal(rawResp, &env); err != nil {
+		t.Fatalf("response envelope json error = %v", err)
+	}
+	if !env.OK {
+		t.Fatalf("response envelope = %#v, want ok", env)
+	}
+	var resp pluginapi.ManagementResponse
+	if err := json.Unmarshal(env.Result, &resp); err != nil {
+		t.Fatalf("management response json error = %v", err)
+	}
+	if resp.StatusCode != http.StatusOK || !contains(string(resp.Body), "Gateway") {
+		t.Fatalf("resource response status=%d body has gateway=%t", resp.StatusCode, contains(string(resp.Body), "Gateway"))
+	}
+}
+
 func TestApplyRulesRewriteModelAndResponsesPayload(t *testing.T) {
 	policy := policyConfig{
 		Enabled: true,
