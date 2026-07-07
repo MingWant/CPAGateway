@@ -31,7 +31,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case pluginabi.MethodUsageHandle:
 		return handleUsage(request)
 	case pluginabi.MethodManagementRegister:
-		return okEnvelope(managementRegistration())
+		return okEnvelope(managementRegistrationForRPC())
 	case pluginabi.MethodManagementHandle:
 		return handleManagement(request)
 	default:
@@ -142,6 +142,21 @@ func managementRegistration() pluginapi.ManagementRegistrationResponse {
 	}
 }
 
+func managementRegistrationForRPC() pluginapi.ManagementRegistrationResponse {
+	reg := managementRegistration()
+	routes := make([]pluginapi.ManagementRoute, 0, len(reg.Routes))
+	for _, route := range reg.Routes {
+		route.Handler = nil
+		routes = append(routes, route)
+	}
+	resources := make([]pluginapi.ResourceRoute, 0, len(reg.Resources))
+	for _, route := range reg.Resources {
+		route.Handler = nil
+		resources = append(resources, route)
+	}
+	return pluginapi.ManagementRegistrationResponse{Routes: routes, Resources: resources}
+}
+
 func interceptBefore(raw []byte) ([]byte, error) {
 	var req pluginapi.RequestInterceptRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
@@ -183,6 +198,19 @@ func handleManagement(raw []byte) ([]byte, error) {
 			path = "/v0/management" + path
 		}
 		if strings.EqualFold(route.Method, req.Method) && path == req.Path {
+			resp, err := route.Handler.HandleManagement(nil, req)
+			if err != nil {
+				return nil, err
+			}
+			return okEnvelope(resp)
+		}
+	}
+	for _, route := range managementRegistration().Resources {
+		path := route.Path
+		if !strings.HasPrefix(path, "/v0/resource/plugins/gateway") {
+			path = "/v0/resource/plugins/gateway" + path
+		}
+		if strings.EqualFold(http.MethodGet, req.Method) && path == req.Path {
 			resp, err := route.Handler.HandleManagement(nil, req)
 			if err != nil {
 				return nil, err
