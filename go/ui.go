@@ -30,6 +30,15 @@ pre{margin:0;padding:14px;border-radius:16px;background:#152126;color:#d9f6f2;ov
   <section class="hero">
     <h1>Gateway Manager</h1>
     <p>Manage per-key gateway routing, model rewrite rules, daily limits, minute rate limits, and dry-run checks for CPA top-level API keys.</p>
+    <div class="card" style="padding:14px 16px;border-radius:18px">
+      <h2 style="margin:0 0 10px">Management Access</h2>
+      <p class="hint" style="margin-top:0">Enter the CPAMC management key before connecting. The key is kept in this browser session only and is sent as management authentication headers.</p>
+      <div class="grid2">
+        <label>CPAMC Management Key<input id="managementKeyInput" type="password" autocomplete="current-password" placeholder="management secret-key"></label>
+        <label>Status<input id="managementAuthStatus" readonly value="Not connected"></label>
+      </div>
+      <div class="actions"><button class="alt" id="connectManagementBtn">Connect / Refresh</button><button id="saveManagementKeyBtn">Save For Session</button><button class="danger" id="clearManagementKeyBtn">Clear Key</button></div>
+    </div>
     <div class="card" style="padding:12px 16px;border-radius:18px;position:sticky;top:12px;z-index:2"><strong>Current Context</strong><div id="contextBreadcrumb" class="hint">window 1h | no policy selected</div></div>
   </section>
   <section class="layout">
@@ -175,9 +184,42 @@ const api = {
   dryRun: '/v0/management/plugins/gateway/dry-run'
 };
 const gatewayTokenParam = new URLSearchParams(window.location.search).get('gateway_token') || '';
+const managementKeyStorage = 'gateway-management-key';
+let managementAuthBlocked = false;
 function apiURL(url){
   if(!gatewayTokenParam) return url;
   return url + (url.includes('?') ? '&' : '?') + 'gateway_token=' + encodeURIComponent(gatewayTokenParam);
+}
+function loadManagementKey(){ try { return window.sessionStorage.getItem(managementKeyStorage) || ''; } catch { return ''; } }
+function storeManagementKey(value){ try { if(value) window.sessionStorage.setItem(managementKeyStorage, value); else window.sessionStorage.removeItem(managementKeyStorage); } catch {} }
+function currentManagementKey(){ return (el('managementKeyInput')?.value || loadManagementKey() || '').trim(); }
+function setManagementStatus(message, kind='ok'){
+  const node = el('managementAuthStatus');
+  if(!node) return;
+  node.value = message;
+  node.style.color = kind === 'bad' ? '#b42318' : '#0f766e';
+}
+function managementInit(init){
+  const next = Object.assign({}, init || {});
+  const headers = new Headers((init && init.headers) || {});
+  const key = currentManagementKey();
+  if(key){
+    headers.set('Authorization', 'Bearer ' + key);
+    headers.set('X-Management-Key', key);
+  }
+  next.headers = headers;
+  next.credentials = 'same-origin';
+  return next;
+}
+function ensureManagementAccess(){
+  if(!currentManagementKey()){
+    setManagementStatus('Enter management key first', 'bad');
+    throw new Error('Enter the CPAMC management key before connecting.');
+  }
+  if(managementAuthBlocked){
+    setManagementStatus('Auth failed; save key or reconnect', 'bad');
+    throw new Error('Management authentication is blocked after a failed attempt. Save the key or reconnect before retrying.');
+  }
 }
 const rawInnerHTMLDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
 function sanitizeHTML(raw){
@@ -280,7 +322,22 @@ if(safeApplyInput){ safeApplyInput.value = 'true'; safeApplyInput.disabled = tru
 const initialURLState = readURLState();
 let state = { keys: [], usage: [], health: {}, audit: [], auditSummary: { total_by_decision: {}, total_by_reason: {}, total_by_rule: {}, total_by_policy: {}, total_by_model: {} }, templates: [], policies: { key_policies: [], default_policy: {} }, selectedKeyId: initialURLState.keyId || '', selectedRuleId: initialURLState.ruleId || '', focusedPreviewLabel: initialURLState.previewLabel || '', focusedPreviewType: initialURLState.previewType || '', latestPoolPreviewToken: '', weightedRoutes: [], failoverHops: [], memberHitCounts: {}, ruleHitCounts: {}, stageHitCounts: {}, memberHitCountsLast5m: {}, ruleHitCountsLast5m: {}, stageHitCountsLast5m: {}, memberHitCountsLastHour: {}, ruleHitCountsLastHour: {}, stageHitCountsLastHour: {}, memberHitCountsLast24h: {}, ruleHitCountsLast24h: {}, stageHitCountsLast24h: {}, statsWindow: initialURLState.statsWindow || '1h', collapsedTopology: Object.keys(initialURLState.collapsedTopology || {}).length ? initialURLState.collapsedTopology : loadCollapsedTopology() };
 function log(msg, kind='ok'){ el('logBox').textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg; el('logBox').style.color = kind === 'bad' ? '#ffb4ab' : '#9ff3e8'; }
-async function readJSON(url, init){ const res = await fetch(apiURL(url), init); const body = await res.json(); if(!res.ok) throw new Error(body.error || body.message || JSON.stringify(body)); return body; }
+async function readJSON(url, init){
+  if(url.startsWith('/v0/management/')) ensureManagementAccess();
+  const res = await fetch(apiURL(url), managementInit(init));
+  const text = await res.text();
+  let body = {};
+  if(text){
+    try { body = JSON.parse(text); } catch { body = { message: text }; }
+  }
+  if(res.status === 401 || res.status === 403){
+    managementAuthBlocked = true;
+    setManagementStatus('Auth failed: check management key', 'bad');
+    throw new Error(body.error || body.message || 'Management authentication failed.');
+  }
+  if(!res.ok) throw new Error(body.error || body.message || JSON.stringify(body));
+  return body;
+}
 function selectedPolicy(){ return (state.policies.key_policies || []).find(item => item.key_id === state.selectedKeyId) || null; }
 function renderKeys(){
   const root = el('keysList'); clearNode(root);
@@ -1268,7 +1325,8 @@ function auditQuery(){
 }
 async function refreshAll(){
   try{
-    const [keys, policies, usage, audit, auditSummary, templates, health] = await Promise.all([readJSON(api.keys), readJSON(api.policies), readJSON(api.usage), readJSON(api.audit + '?' + auditQuery()), readJSON(api.auditSummary + '?' + auditQuery()), readJSON(api.templates), readJSON(api.health)]);
+    const health = await readJSON(api.health);
+    const [keys, policies, usage, audit, auditSummary, templates] = await Promise.all([readJSON(api.keys), readJSON(api.policies), readJSON(api.usage), readJSON(api.audit + '?' + auditQuery()), readJSON(api.auditSummary + '?' + auditQuery()), readJSON(api.templates)]);
     state.keys = keys.keys || [];
     state.policies = policies || { key_policies: [], default_policy: {} };
     state.usage = usage.usage || [];
@@ -1308,10 +1366,55 @@ async function refreshAll(){
     renderRouteGraph();
     renderDryRunDecision(null);
     renderDryRunStageTrace([]);
+    setManagementStatus('Connected');
     log('Gateway data refreshed.');
   }catch(err){ log(err.message, 'bad'); }
 }
-el('refreshBtn').addEventListener('click', refreshAll);
+async function connectGateway(){
+  const key = currentManagementKey();
+  if(!key){
+    setManagementStatus('Enter management key first', 'bad');
+    log('Enter the CPAMC management key before connecting.', 'bad');
+    return;
+  }
+  storeManagementKey(key);
+  managementAuthBlocked = false;
+  setManagementStatus('Connecting...');
+  await refreshAll();
+}
+function initManagementAccess(){
+  const input = el('managementKeyInput');
+  const stored = loadManagementKey();
+  if(input && stored) input.value = stored;
+  el('saveManagementKeyBtn').addEventListener('click', () => {
+    const key = currentManagementKey();
+    if(!key){
+      setManagementStatus('Enter management key first', 'bad');
+      log('Enter the CPAMC management key before saving.', 'bad');
+      return;
+    }
+    storeManagementKey(key);
+    managementAuthBlocked = false;
+    setManagementStatus('Saved for this session');
+    log('Management key saved for this browser session.');
+  });
+  el('clearManagementKeyBtn').addEventListener('click', () => {
+    storeManagementKey('');
+    managementAuthBlocked = false;
+    if(input) input.value = '';
+    setManagementStatus('Not connected');
+    log('Management key cleared from this browser session.');
+  });
+  el('connectManagementBtn').addEventListener('click', connectGateway);
+  if(stored){
+    setManagementStatus('Stored key found');
+    connectGateway();
+  }else{
+    setManagementStatus('Not connected');
+    log('Enter the CPAMC management key, then click Connect / Refresh.');
+  }
+}
+el('refreshBtn').addEventListener('click', connectGateway);
 el('statsWindow5mBtn').addEventListener('click', () => { state.statsWindow = '5m'; syncURLState(); renderUsage(); renderPoolHealth(); renderGlobalTopology(); });
 el('statsWindow1hBtn').addEventListener('click', () => { state.statsWindow = '1h'; syncURLState(); renderUsage(); renderPoolHealth(); renderGlobalTopology(); });
 el('statsWindow24hBtn').addEventListener('click', () => { state.statsWindow = '24h'; syncURLState(); renderUsage(); renderPoolHealth(); renderGlobalTopology(); });
@@ -1868,7 +1971,7 @@ el('poolShiftProviderBtn').addEventListener('click', async () => {
   } catch(err){ log(err.message || 'Shift provider failed.', 'bad'); }
 });
 
-refreshAll();
+initManagementAccess();
 </script>
 </body>
 </html>`
