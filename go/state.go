@@ -25,7 +25,7 @@ func newPluginState() *pluginState {
 	}
 }
 
-func (s *pluginState) apply(req pluginapi.RequestInterceptRequest, afterAuth bool) pluginapi.RequestInterceptResponse {
+func (s *pluginState) apply(req pluginapi.RequestInterceptRequest, afterAuth bool) requestInterceptResponse {
 	result := s.evaluate(req, afterAuth)
 	finalModel := strings.TrimSpace(result.FinalModel)
 	if finalModel == "" {
@@ -54,7 +54,7 @@ func (s *pluginState) evaluateWithLimits(req pluginapi.RequestInterceptRequest, 
 	now := time.Now()
 	policy, keyID, displayName, maskedKey := s.lookupPolicy(req)
 	if !policy.Enabled {
-		resp := withGatewayMetadata(pluginapi.RequestInterceptResponse{Headers: cloneHeader(req.Headers), Body: cloneBytes(req.Body)}, map[string]string{"gateway.policy_id": keyID, "gateway.policy_name": displayName, "gateway.decision": "pass", "gateway.reason": "policy_disabled"})
+		resp := withGatewayMetadata(requestInterceptResponse{Headers: cloneHeader(req.Headers), Body: cloneBytes(req.Body)}, map[string]string{"gateway.policy_id": keyID, "gateway.policy_name": displayName, "gateway.decision": "pass", "gateway.reason": "policy_disabled"})
 		return dryRunResult{Decision: "pass", Reason: "policy_disabled", FinalModel: req.Model, Response: resp}
 	}
 	if reject := s.enforceLimits(keyID, displayName, maskedKey, policy.Limits, now, afterAuth, enforce); reject != nil {
@@ -88,12 +88,12 @@ func (s *pluginState) lookupPolicy(req pluginapi.RequestInterceptRequest) (polic
 	return clonePolicyConfig(s.config.Default), defaultKeyID, "default", maskKey(apiKey)
 }
 
-func (s *pluginState) enforceLimits(keyID, displayName, maskedKey string, limits limitConfig, now time.Time, afterAuth bool, enforce bool) *pluginapi.RequestInterceptResponse {
+func (s *pluginState) enforceLimits(keyID, displayName, maskedKey string, limits limitConfig, now time.Time, afterAuth bool, enforce bool) *requestInterceptResponse {
 	if keyID == "" {
 		return nil
 	}
 	if !withinAbsoluteWindow(limits, now) || !withinSchedules(limits.Schedules, now) {
-		return &pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusForbidden, RejectMessage: "gateway schedule rejected request", RejectCode: "gateway_schedule_denied"}
+		return &requestInterceptResponse{Reject: true, RejectStatusCode: http.StatusForbidden, RejectMessage: "gateway schedule rejected request", RejectCode: "gateway_schedule_denied"}
 	}
 	if afterAuth {
 		return nil
@@ -111,7 +111,7 @@ func (s *pluginState) enforceLimits(keyID, displayName, maskedKey string, limits
 	return s.enforceLocalLimits(keyID, displayName, maskedKey, limits, now, enforce)
 }
 
-func (s *pluginState) handleCounterBackendUnavailable(reject *pluginapi.RequestInterceptResponse, keyID, displayName, maskedKey string, limits limitConfig, now time.Time, enforce bool) *pluginapi.RequestInterceptResponse {
+func (s *pluginState) handleCounterBackendUnavailable(reject *requestInterceptResponse, keyID, displayName, maskedKey string, limits limitConfig, now time.Time, enforce bool) *requestInterceptResponse {
 	s.mu.RLock()
 	mode := s.config.Cluster.Redis.FailureMode
 	s.mu.RUnlock()
@@ -125,7 +125,7 @@ func (s *pluginState) handleCounterBackendUnavailable(reject *pluginapi.RequestI
 	}
 }
 
-func (s *pluginState) enforceLocalLimits(keyID, displayName, maskedKey string, limits limitConfig, now time.Time, enforce bool) *pluginapi.RequestInterceptResponse {
+func (s *pluginState) enforceLocalLimits(keyID, displayName, maskedKey string, limits limitConfig, now time.Time, enforce bool) *requestInterceptResponse {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if enforce {
@@ -159,16 +159,16 @@ func (s *pluginState) enforceLocalLimits(keyID, displayName, maskedKey string, l
 		s.requestWindow[keyID] = window
 	}
 	if limits.RequestsPerMin > 0 && len(window) >= limits.RequestsPerMin {
-		return &pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusTooManyRequests, RejectMessage: "gateway rate limit exceeded", RejectCode: "gateway_rate_limit_exceeded"}
+		return &requestInterceptResponse{Reject: true, RejectStatusCode: http.StatusTooManyRequests, RejectMessage: "gateway rate limit exceeded", RejectCode: "gateway_rate_limit_exceeded"}
 	}
 	if limits.RequestsPerDay > 0 && requestsToday >= limits.RequestsPerDay {
-		return &pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusForbidden, RejectMessage: "gateway daily quota exceeded", RejectCode: "gateway_quota_exceeded"}
+		return &requestInterceptResponse{Reject: true, RejectStatusCode: http.StatusForbidden, RejectMessage: "gateway daily quota exceeded", RejectCode: "gateway_quota_exceeded"}
 	}
 	if limits.TokensPerDay > 0 && tokensToday >= int64(limits.TokensPerDay) {
-		return &pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusForbidden, RejectMessage: "gateway token quota exceeded", RejectCode: "gateway_token_quota_exceeded"}
+		return &requestInterceptResponse{Reject: true, RejectStatusCode: http.StatusForbidden, RejectMessage: "gateway token quota exceeded", RejectCode: "gateway_token_quota_exceeded"}
 	}
 	if limits.MaxInflight > 0 && inflight >= limits.MaxInflight {
-		return &pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusTooManyRequests, RejectMessage: "gateway concurrency limit exceeded", RejectCode: "gateway_concurrency_exceeded"}
+		return &requestInterceptResponse{Reject: true, RejectStatusCode: http.StatusTooManyRequests, RejectMessage: "gateway concurrency limit exceeded", RejectCode: "gateway_concurrency_exceeded"}
 	}
 	if !enforce {
 		return nil
@@ -183,7 +183,7 @@ func (s *pluginState) enforceLocalLimits(keyID, displayName, maskedKey string, l
 	entry.Inflight = inflight + 1
 	s.requestWindow[keyID] = append(window, now)
 	if err := s.persistRuntimeLocked(); err != nil {
-		return &pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusServiceUnavailable, RejectMessage: "gateway persistence unavailable", RejectCode: "gateway_persistence_unavailable"}
+		return &requestInterceptResponse{Reject: true, RejectStatusCode: http.StatusServiceUnavailable, RejectMessage: "gateway persistence unavailable", RejectCode: "gateway_persistence_unavailable"}
 	}
 	return nil
 }

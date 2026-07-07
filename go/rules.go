@@ -83,7 +83,7 @@ func applyRulesWithStages(req pluginapi.RequestInterceptRequest, policy policyCo
 			trace = append(trace, stageTrace{Stage: stage, Mode: stageMode, MatchedRules: append([]string(nil), stageMatched...), MatchedCount: len(stageMatched), FinalModel: currentModel, Decision: stageDecision, Reason: stageReason, RoutePool: stageDetail.RoutePool, RouteTarget: stageDetail.RouteTarget, FallbackTarget: stageDetail.FallbackTarget, MirrorModels: append([]string(nil), stageDetail.MirrorModels...), FailoverChain: append([]string(nil), stageDetail.FailoverChain...), FailoverReasons: append([]string(nil), stageDetail.FailoverReasons...)})
 		}
 	}
-	return stageRunResult{Decision: finalDecision, RuleID: finalRuleID, Reason: finalReason, MatchedRules: allMatched, FinalModel: currentModel, Response: pluginapi.RequestInterceptResponse{Headers: currentHeaders, Body: currentBody}, StageTrace: trace}
+	return stageRunResult{Decision: finalDecision, RuleID: finalRuleID, Reason: finalReason, MatchedRules: allMatched, FinalModel: currentModel, Response: requestInterceptResponse{Headers: currentHeaders, Body: currentBody}, StageTrace: trace}
 }
 
 func matchRule(req pluginapi.RequestInterceptRequest, currentModel string, match matchConfig, now time.Time) (bool, string) {
@@ -177,8 +177,8 @@ func matchRule(req pluginapi.RequestInterceptRequest, currentModel string, match
 	return true, "matched"
 }
 
-func applyRuleActions(req pluginapi.RequestInterceptRequest, headers http.Header, body []byte, currentModel string, actions actionConfig, afterAuth bool) (pluginapi.RequestInterceptResponse, []byte, string, string, actionTraceDetail) {
-	resp := pluginapi.RequestInterceptResponse{Headers: cloneHeader(headers), Body: cloneBytes(body)}
+func applyRuleActions(req pluginapi.RequestInterceptRequest, headers http.Header, body []byte, currentModel string, actions actionConfig, afterAuth bool) (requestInterceptResponse, []byte, string, string, actionTraceDetail) {
+	resp := requestInterceptResponse{Headers: cloneHeader(headers), Body: cloneBytes(body)}
 	model := currentModel
 	detail := actionTraceDetail{}
 	if actions.RoutePool != nil {
@@ -189,7 +189,7 @@ func applyRuleActions(req pluginapi.RequestInterceptRequest, headers http.Header
 		if status == 0 {
 			status = http.StatusForbidden
 		}
-		return pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: status, RejectMessage: actions.Deny.Message, RejectCode: actions.Deny.Code}, body, currentModel, "deny", detail
+		return requestInterceptResponse{Reject: true, RejectStatusCode: status, RejectMessage: actions.Deny.Message, RejectCode: actions.Deny.Code}, body, currentModel, "deny", detail
 	}
 	reason := "rewrite"
 	if strings.TrimSpace(actions.RewriteModel) != "" {
@@ -254,10 +254,10 @@ func applyRuleActions(req pluginapi.RequestInterceptRequest, headers http.Header
 		}
 	}
 	if len(actions.AllowOnlyProviders) > 0 && !containsFold(actions.AllowOnlyProviders, providerFromModel(model)) {
-		return pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusForbidden, RejectMessage: "gateway provider policy rejected request", RejectCode: "gateway_provider_denied"}, body, currentModel, "allow_only_providers", detail
+		return requestInterceptResponse{Reject: true, RejectStatusCode: http.StatusForbidden, RejectMessage: "gateway provider policy rejected request", RejectCode: "gateway_provider_denied"}, body, currentModel, "allow_only_providers", detail
 	}
 	if len(actions.AllowOnlyModels) > 0 && !containsFold(actions.AllowOnlyModels, model) {
-		return pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusForbidden, RejectMessage: "gateway model policy rejected request", RejectCode: "gateway_model_denied"}, body, currentModel, "allow_only_models", detail
+		return requestInterceptResponse{Reject: true, RejectStatusCode: http.StatusForbidden, RejectMessage: "gateway model policy rejected request", RejectCode: "gateway_model_denied"}, body, currentModel, "allow_only_models", detail
 	}
 	if model != currentModel {
 		if updated, ok := rewriteModelInBody(resp.Body, model); ok {

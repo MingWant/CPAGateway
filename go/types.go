@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
 	"sync"
 	"time"
 
@@ -48,6 +49,16 @@ type pluginConfig struct {
 type persistenceConfig struct {
 	StatePath      string `yaml:"state_path" json:"state_path,omitempty"`
 	PersistRuntime bool   `yaml:"persist_runtime" json:"persist_runtime,omitempty"`
+}
+
+type requestInterceptResponse struct {
+	Headers          http.Header
+	Body             []byte
+	ClearHeaders     []string
+	Reject           bool
+	RejectStatusCode int
+	RejectMessage    string
+	RejectCode       string
 }
 
 type securityConfig struct {
@@ -244,23 +255,23 @@ type usageEntry struct {
 }
 
 type dryRunResult struct {
-	Decision     string                             `json:"decision"`
-	RuleID       string                             `json:"rule_id,omitempty"`
-	Reason       string                             `json:"reason,omitempty"`
-	MatchedRules []string                           `json:"matched_rules,omitempty"`
-	FinalModel   string                             `json:"final_model,omitempty"`
-	Response     pluginapi.RequestInterceptResponse `json:"response"`
-	StageTrace   []stageTrace                       `json:"stage_trace,omitempty"`
+	Decision     string                   `json:"decision"`
+	RuleID       string                   `json:"rule_id,omitempty"`
+	Reason       string                   `json:"reason,omitempty"`
+	MatchedRules []string                 `json:"matched_rules,omitempty"`
+	FinalModel   string                   `json:"final_model,omitempty"`
+	Response     requestInterceptResponse `json:"response"`
+	StageTrace   []stageTrace             `json:"stage_trace,omitempty"`
 }
 
 type stageRunResult struct {
-	Decision     string                             `json:"decision"`
-	RuleID       string                             `json:"rule_id,omitempty"`
-	Reason       string                             `json:"reason,omitempty"`
-	MatchedRules []string                           `json:"matched_rules,omitempty"`
-	FinalModel   string                             `json:"final_model,omitempty"`
-	Response     pluginapi.RequestInterceptResponse `json:"response"`
-	StageTrace   []stageTrace                       `json:"stage_trace,omitempty"`
+	Decision     string                   `json:"decision"`
+	RuleID       string                   `json:"rule_id,omitempty"`
+	Reason       string                   `json:"reason,omitempty"`
+	MatchedRules []string                 `json:"matched_rules,omitempty"`
+	FinalModel   string                   `json:"final_model,omitempty"`
+	Response     requestInterceptResponse `json:"response"`
+	StageTrace   []stageTrace             `json:"stage_trace,omitempty"`
 }
 
 type stageTrace struct {

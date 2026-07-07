@@ -8,8 +8,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
 func normalizeConfig(cfg pluginConfig) pluginConfig {
@@ -285,7 +283,7 @@ func stringListHeader(headers http.Header, key string) []string {
 	return out
 }
 
-func withGatewayMetadata(resp pluginapi.RequestInterceptResponse, attrs map[string]string) pluginapi.RequestInterceptResponse {
+func withGatewayMetadata(resp requestInterceptResponse, attrs map[string]string) requestInterceptResponse {
 	if len(attrs) == 0 {
 		return resp
 	}

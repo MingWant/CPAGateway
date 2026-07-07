@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
 const redisCounterTimeout = 2 * time.Second
@@ -125,7 +124,7 @@ func (s *redisCounterStore) ping(timeout time.Duration) error {
 	return s.client.Ping(ctx).Err()
 }
 
-func (s *redisCounterStore) enforce(keyID, displayName, maskedKey string, limits limitConfig, now time.Time, enforce bool) *pluginapi.RequestInterceptResponse {
+func (s *redisCounterStore) enforce(keyID, displayName, maskedKey string, limits limitConfig, now time.Time, enforce bool) *requestInterceptResponse {
 	result, err := s.runEnforceScript(keyID, displayName, maskedKey, limits, now, enforce)
 	if err != nil {
 		return redisUnavailableResponse(err)
@@ -241,12 +240,12 @@ func (s *redisCounterStore) runReleaseScript(keyID, displayName, maskedKey strin
 	return values, nil
 }
 
-func redisCounterReject(values []any) *pluginapi.RequestInterceptResponse {
+func redisCounterReject(values []any) *requestInterceptResponse {
 	if len(values) < 4 || redisValueString(values[0]) != "reject" {
 		return nil
 	}
 	status := atoiDefault(redisValueString(values[2]), http.StatusForbidden)
-	return &pluginapi.RequestInterceptResponse{
+	return &requestInterceptResponse{
 		Reject:           true,
 		RejectStatusCode: status,
 		RejectMessage:    redisValueString(values[3]),
@@ -254,8 +253,8 @@ func redisCounterReject(values []any) *pluginapi.RequestInterceptResponse {
 	}
 }
 
-func redisUnavailableResponse(_ error) *pluginapi.RequestInterceptResponse {
-	return &pluginapi.RequestInterceptResponse{
+func redisUnavailableResponse(_ error) *requestInterceptResponse {
+	return &requestInterceptResponse{
 		Reject:           true,
 		RejectStatusCode: http.StatusServiceUnavailable,
 		RejectMessage:    "gateway counter backend unavailable",
