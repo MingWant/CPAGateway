@@ -24,6 +24,45 @@ This plugin is built around CPAMC top-level `Access & Authentication` API keys. 
 - Safe apply with preview token flow
 - Signed preview token verification on the backend
 - Operator audit with structured member diffs
+- Optional JSON state persistence for policies, templates, audit, and usage counters
+- Optional Redis-backed shared counters for multi-instance quotas, rate limits, token quotas, and inflight limits
+- Optional plugin-level read/admin/UI tokens layered on top of host management authentication
+- Read-only health diagnostics for CPAMC compatibility, persistence, Redis, and security status
+
+## Production-Oriented Configuration
+
+The host still authenticates `/v0/management/...` requests. For stronger plugin-local controls and durable state, add these fields to the plugin config:
+
+```yaml
+persistence:
+  state_path: ./gateway-state.json
+  persist_runtime: true
+
+cluster:
+  backend: redis
+  redis:
+    addr: 127.0.0.1:6379
+    key_prefix: cpa-gateway
+    failure_mode: reject # reject | allow | local_fallback
+
+security:
+  require_management_token: true
+  admin_tokens:
+    - change-this-admin-token
+  read_tokens:
+    - change-this-read-token
+  ui_access_tokens:
+    - change-this-ui-token
+```
+
+Notes:
+
+- Redis is not required for normal CPAMC usage. If `cluster.backend` is unset, the plugin keeps using local in-process counters and CPAMC does not need a Redis service.
+- `state_path` stores policy/template state and, when `persist_runtime` is true, runtime usage and audit snapshots. Protect this file because it can contain policy API-key match secrets.
+- `cluster.backend: redis` moves quota, per-minute, token, and inflight counters into Redis so multiple plugin instances share enforcement state.
+- `redis.failure_mode` controls Redis outage behavior: `reject` fails closed with `503`, `allow` fails open, and `local_fallback` temporarily uses per-process counters. Keep `reject` for strict multi-instance quotas; use `local_fallback` only when availability matters more than exact cluster-wide limits during an outage.
+- `admin_tokens` are required for mutating management routes when `require_management_token` is true. `read_tokens` can only call read and preview routes.
+- `ui_access_tokens` protects the browser resource route, which the host exposes separately from authenticated management API routes.
 
 ## Directory Layout
 
@@ -41,6 +80,7 @@ The plugin exposes management routes under `/v0/management/plugins/gateway/...`.
 Core route groups:
 
 - `GET /keys`
+- `GET /health`
 - `GET/PUT/PATCH/DELETE /policies`
 - `POST /policies/add`
 - `POST /policies/clone`
@@ -54,6 +94,8 @@ Core route groups:
 - `GET /audit/detail`
 - `GET /audit/summary`
 - `POST /dry-run`
+
+`GET /health` returns non-secret diagnostics only: plugin version, counter backend, whether Redis is required, Redis ping status when enabled, persistence mode, token counts, and policy/template counters. It does not return API keys, Redis passwords, or management token values.
 
 ## Host Contract
 

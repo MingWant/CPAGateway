@@ -36,10 +36,39 @@ type registrationCapability struct {
 }
 
 type pluginConfig struct {
-	Enabled     bool              `yaml:"enabled"`
-	Priority    int               `yaml:"priority"`
-	Default     policyConfig      `yaml:"default_policy"`
-	KeyPolicies []keyPolicyConfig `yaml:"key_policies"`
+	Enabled     bool              `yaml:"enabled" json:"enabled"`
+	Priority    int               `yaml:"priority" json:"priority"`
+	Persistence persistenceConfig `yaml:"persistence" json:"persistence,omitempty"`
+	Security    securityConfig    `yaml:"security" json:"security,omitempty"`
+	Cluster     clusterConfig     `yaml:"cluster" json:"cluster,omitempty"`
+	Default     policyConfig      `yaml:"default_policy" json:"default_policy"`
+	KeyPolicies []keyPolicyConfig `yaml:"key_policies" json:"key_policies"`
+}
+
+type persistenceConfig struct {
+	StatePath      string `yaml:"state_path" json:"state_path,omitempty"`
+	PersistRuntime bool   `yaml:"persist_runtime" json:"persist_runtime,omitempty"`
+}
+
+type securityConfig struct {
+	RequireManagementToken bool     `yaml:"require_management_token" json:"require_management_token,omitempty"`
+	AdminTokens            []string `yaml:"admin_tokens" json:"admin_tokens,omitempty"`
+	ReadTokens             []string `yaml:"read_tokens" json:"read_tokens,omitempty"`
+	UIAccessTokens         []string `yaml:"ui_access_tokens" json:"ui_access_tokens,omitempty"`
+}
+
+type clusterConfig struct {
+	Backend string      `yaml:"backend" json:"backend,omitempty"`
+	Redis   redisConfig `yaml:"redis" json:"redis,omitempty"`
+}
+
+type redisConfig struct {
+	Addr        string `yaml:"addr" json:"addr,omitempty"`
+	Username    string `yaml:"username" json:"username,omitempty"`
+	Password    string `yaml:"password" json:"password,omitempty"`
+	DB          int    `yaml:"db" json:"db,omitempty"`
+	KeyPrefix   string `yaml:"key_prefix" json:"key_prefix,omitempty"`
+	FailureMode string `yaml:"failure_mode" json:"failure_mode,omitempty"`
 }
 
 type policyConfig struct {
@@ -186,6 +215,23 @@ type policyBundle struct {
 	ExportedAt    time.Time         `json:"exported_at,omitempty"`
 }
 
+type persistedState struct {
+	Version       int                      `json:"version"`
+	DefaultPolicy policyConfig             `json:"default_policy"`
+	KeyPolicies   []keyPolicyConfig        `json:"key_policies"`
+	Templates     []ruleTemplate           `json:"templates,omitempty"`
+	Usage         map[string]*usageCounter `json:"usage,omitempty"`
+	RequestWindow map[string][]time.Time   `json:"request_window,omitempty"`
+	AuditLog      []auditEntry             `json:"audit_log,omitempty"`
+	MemberHits    map[string]int           `json:"member_hits,omitempty"`
+	RuleHits      map[string]int           `json:"rule_hits,omitempty"`
+	StageHits     map[string]int           `json:"stage_hits,omitempty"`
+	MemberTimes   map[string][]time.Time   `json:"member_hit_times,omitempty"`
+	RuleTimes     map[string][]time.Time   `json:"rule_hit_times,omitempty"`
+	StageTimes    map[string][]time.Time   `json:"stage_hit_times,omitempty"`
+	SavedAt       time.Time                `json:"saved_at,omitempty"`
+}
+
 type usageEntry struct {
 	KeyID          string    `json:"key_id"`
 	DisplayName    string    `json:"display_name"`
@@ -248,6 +294,7 @@ type previewTokenRecord struct {
 type pluginState struct {
 	mu              sync.RWMutex
 	config          pluginConfig
+	redisCounters   *redisCounterStore
 	usage           map[string]*usageCounter
 	requestWindow   map[string][]time.Time
 	auditLog        []auditEntry

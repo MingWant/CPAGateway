@@ -32,9 +32,15 @@ func applyRulesWithStages(req pluginapi.RequestInterceptRequest, policy policyCo
 	currentModel := req.Model
 	allMatched := make([]string, 0)
 	trace := make([]stageTrace, 0)
+	finalDecision := "pass"
+	finalRuleID := ""
+	finalReason := ""
 	for _, stage := range orderedStages(policy.Rules) {
 		stageMatched := make([]string, 0)
 		stageMode := stageModeFor(policy, stage)
+		stageDecision := "pass"
+		stageReason := ""
+		stageDetail := actionTraceDetail{}
 		for _, rule := range rulesForStage(policy.Rules, stage) {
 			if !rule.Enabled {
 				continue
@@ -52,12 +58,18 @@ func applyRulesWithStages(req pluginapi.RequestInterceptRequest, policy policyCo
 				currentBody = cloneBytes(nextBody)
 			}
 			currentModel = nextModel
+			decision := "rewrite"
+			if resp.Reject {
+				decision = "reject"
+			}
+			stageDecision = decision
+			stageReason = actionReason
+			stageDetail = detail
+			finalDecision = decision
+			finalRuleID = rule.ID
+			finalReason = actionReason
 			shouldStop := resp.Reject || strings.EqualFold(strings.TrimSpace(rule.OnMatch), "stop") || strings.EqualFold(stageMode, "first-match")
 			if shouldStop {
-				decision := "rewrite"
-				if resp.Reject {
-					decision = "reject"
-				}
 				trace = append(trace, stageTrace{Stage: stage, Mode: stageMode, MatchedRules: append([]string(nil), stageMatched...), MatchedCount: len(stageMatched), FinalModel: currentModel, Decision: decision, Reason: actionReason, RoutePool: detail.RoutePool, RouteTarget: detail.RouteTarget, FallbackTarget: detail.FallbackTarget, MirrorModels: append([]string(nil), detail.MirrorModels...), FailoverChain: append([]string(nil), detail.FailoverChain...), FailoverReasons: append([]string(nil), detail.FailoverReasons...)})
 				if resp.Reject || strings.EqualFold(strings.TrimSpace(rule.OnMatch), "stop") {
 					return stageRunResult{Decision: decision, RuleID: rule.ID, Reason: actionReason, MatchedRules: allMatched, FinalModel: currentModel, Response: resp, StageTrace: trace}
@@ -65,9 +77,13 @@ func applyRulesWithStages(req pluginapi.RequestInterceptRequest, policy policyCo
 				break
 			}
 		}
-		trace = append(trace, stageTrace{Stage: stage, Mode: stageMode, MatchedRules: append([]string(nil), stageMatched...), MatchedCount: len(stageMatched), FinalModel: currentModel, Decision: "pass"})
+		if len(stageMatched) == 0 || stageDecision == "pass" {
+			trace = append(trace, stageTrace{Stage: stage, Mode: stageMode, MatchedRules: append([]string(nil), stageMatched...), MatchedCount: len(stageMatched), FinalModel: currentModel, Decision: "pass"})
+		} else if len(trace) == 0 || trace[len(trace)-1].Stage != stage {
+			trace = append(trace, stageTrace{Stage: stage, Mode: stageMode, MatchedRules: append([]string(nil), stageMatched...), MatchedCount: len(stageMatched), FinalModel: currentModel, Decision: stageDecision, Reason: stageReason, RoutePool: stageDetail.RoutePool, RouteTarget: stageDetail.RouteTarget, FallbackTarget: stageDetail.FallbackTarget, MirrorModels: append([]string(nil), stageDetail.MirrorModels...), FailoverChain: append([]string(nil), stageDetail.FailoverChain...), FailoverReasons: append([]string(nil), stageDetail.FailoverReasons...)})
+		}
 	}
-	return stageRunResult{Decision: "pass", MatchedRules: allMatched, FinalModel: currentModel, Response: pluginapi.RequestInterceptResponse{Headers: currentHeaders, Body: currentBody}, StageTrace: trace}
+	return stageRunResult{Decision: finalDecision, RuleID: finalRuleID, Reason: finalReason, MatchedRules: allMatched, FinalModel: currentModel, Response: pluginapi.RequestInterceptResponse{Headers: currentHeaders, Body: currentBody}, StageTrace: trace}
 }
 
 func matchRule(req pluginapi.RequestInterceptRequest, currentModel string, match matchConfig, now time.Time) (bool, string) {
@@ -154,8 +170,7 @@ func matchRule(req pluginapi.RequestInterceptRequest, currentModel string, match
 		}
 	}
 	if match.Start != "" && match.End != "" {
-		current := now.Format("15:04")
-		if current < match.Start || current > match.End {
+		if !withinClockWindow(now.Format("15:04"), match.Start, match.End) {
 			return false, "time_window_mismatch"
 		}
 	}

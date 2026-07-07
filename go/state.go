@@ -98,6 +98,34 @@ func (s *pluginState) enforceLimits(keyID, displayName, maskedKey string, limits
 	if afterAuth {
 		return nil
 	}
+	s.mu.RLock()
+	redisCounters := s.redisCounters
+	s.mu.RUnlock()
+	if redisCounters != nil {
+		reject := redisCounters.enforce(keyID, displayName, maskedKey, limits, now, enforce)
+		if reject == nil || reject.RejectCode != "gateway_counter_backend_unavailable" {
+			return reject
+		}
+		return s.handleCounterBackendUnavailable(reject, keyID, displayName, maskedKey, limits, now, enforce)
+	}
+	return s.enforceLocalLimits(keyID, displayName, maskedKey, limits, now, enforce)
+}
+
+func (s *pluginState) handleCounterBackendUnavailable(reject *pluginapi.RequestInterceptResponse, keyID, displayName, maskedKey string, limits limitConfig, now time.Time, enforce bool) *pluginapi.RequestInterceptResponse {
+	s.mu.RLock()
+	mode := s.config.Cluster.Redis.FailureMode
+	s.mu.RUnlock()
+	switch mode {
+	case "allow":
+		return nil
+	case "local_fallback":
+		return s.enforceLocalLimits(keyID, displayName, maskedKey, limits, now, enforce)
+	default:
+		return reject
+	}
+}
+
+func (s *pluginState) enforceLocalLimits(keyID, displayName, maskedKey string, limits limitConfig, now time.Time, enforce bool) *pluginapi.RequestInterceptResponse {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if enforce {
@@ -154,6 +182,9 @@ func (s *pluginState) enforceLimits(keyID, displayName, maskedKey string, limits
 	entry.RequestsMinute = len(window) + 1
 	entry.Inflight = inflight + 1
 	s.requestWindow[keyID] = append(window, now)
+	if err := s.persistRuntimeLocked(); err != nil {
+		return &pluginapi.RequestInterceptResponse{Reject: true, RejectStatusCode: http.StatusServiceUnavailable, RejectMessage: "gateway persistence unavailable", RejectCode: "gateway_persistence_unavailable"}
+	}
 	return nil
 }
 
@@ -211,6 +242,19 @@ func (s *pluginState) releaseInflight(keyID, displayName, maskedKey string, now 
 	if tokens < 0 {
 		tokens = 0
 	}
+	s.mu.RLock()
+	redisCounters := s.redisCounters
+	failureMode := s.config.Cluster.Redis.FailureMode
+	s.mu.RUnlock()
+	if redisCounters != nil {
+		if err := redisCounters.release(keyID, displayName, maskedKey, now, tokens); err == nil || failureMode != "local_fallback" {
+			return
+		}
+	}
+	s.releaseLocalInflight(keyID, displayName, maskedKey, now, tokens)
+}
+
+func (s *pluginState) releaseLocalInflight(keyID, displayName, maskedKey string, now time.Time, tokens int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.usage == nil {
@@ -244,6 +288,7 @@ func (s *pluginState) releaseInflight(keyID, displayName, maskedKey string, now 
 	window := pruneRecent(append([]time.Time(nil), s.requestWindow[keyID]...), now.Add(-time.Minute))
 	s.requestWindow[keyID] = window
 	entry.RequestsMinute = len(window)
+	_ = s.persistRuntimeLocked()
 }
 
 func usageTotalTokens(detail pluginapi.UsageDetail) int64 {
@@ -273,6 +318,14 @@ func (s *pluginState) listKeys() []map[string]any {
 
 func (s *pluginState) listUsage() []usageEntry {
 	s.mu.RLock()
+	redisCounters := s.redisCounters
+	s.mu.RUnlock()
+	if redisCounters != nil {
+		out := redisCounters.listUsage()
+		sort.Slice(out, func(i, j int) bool { return out[i].KeyID < out[j].KeyID })
+		return out
+	}
+	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]usageEntry, 0, len(s.usage))
 	for keyID, entry := range s.usage {
@@ -281,6 +334,24 @@ func (s *pluginState) listUsage() []usageEntry {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].KeyID < out[j].KeyID })
 	return out
+}
+
+func (s *pluginState) resetUsage(keyID string) error {
+	keyID = strings.TrimSpace(keyID)
+	if keyID == "" {
+		return nil
+	}
+	s.mu.RLock()
+	redisCounters := s.redisCounters
+	s.mu.RUnlock()
+	if redisCounters != nil {
+		return redisCounters.reset(keyID)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.usage, keyID)
+	delete(s.requestWindow, keyID)
+	return s.persistRuntimeLocked()
 }
 
 func (s *pluginState) listAudit(limit int, filters map[string]string) []auditEntry {
@@ -301,7 +372,7 @@ func (s *pluginState) listAudit(limit int, filters map[string]string) []auditEnt
 }
 
 func (s *pluginState) auditSummary(filters map[string]string) auditSummary {
-	items := s.listAudit(len(s.auditLog), filters)
+	items := s.listAudit(0, filters)
 	summary := auditSummary{TotalByDecision: map[string]int{}, TotalByReason: map[string]int{}, TotalByRule: map[string]int{}, TotalByPolicy: map[string]int{}, TotalByModel: map[string]int{}, TotalByProvider: map[string]int{}, Timeline: make([]auditBucket, 0)}
 	timeline := map[string]int{}
 	for _, item := range items {
@@ -356,6 +427,7 @@ func (s *pluginState) appendAuditLocked(entry auditEntry) {
 	if len(s.auditLog) > 200 {
 		s.auditLog = append([]auditEntry(nil), s.auditLog[len(s.auditLog)-200:]...)
 	}
+	_ = s.persistRuntimeLocked()
 }
 
 func (s *pluginState) prunePreviewTokensLocked(now time.Time) {

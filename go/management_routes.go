@@ -30,8 +30,18 @@ func routePutPolicies(req pluginapi.ManagementRequest) (pluginapi.ManagementResp
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
 	gatewayState.mu.Lock()
-	gatewayState.config.Default = normalizePolicy(body.DefaultPolicy)
-	gatewayState.config.KeyPolicies = normalizeKeyPolicies(gatewayState.preservePolicySecretsLocked(body.KeyPolicies))
+	nextDefault := normalizePolicy(body.DefaultPolicy)
+	nextPolicies := normalizeKeyPolicies(gatewayState.preservePolicySecretsLocked(body.KeyPolicies))
+	if validationError := validatePolicySet(nextDefault, nextPolicies); validationError != "" {
+		gatewayState.mu.Unlock()
+		return jsonResponse(http.StatusConflict, map[string]any{"error": validationError})
+	}
+	gatewayState.config.Default = nextDefault
+	gatewayState.config.KeyPolicies = nextPolicies
+	if err := gatewayState.savePersistentStateLocked(); err != nil {
+		gatewayState.mu.Unlock()
+		return persistenceErrorResponse(err)
+	}
 	gatewayState.mu.Unlock()
 	return jsonResponse(http.StatusOK, map[string]any{"ok": true})
 }
@@ -72,9 +82,19 @@ func routeImportPolicies(req pluginapi.ManagementRequest) (pluginapi.ManagementR
 	gatewayState.mu.Lock()
 	defer gatewayState.mu.Unlock()
 	incoming := normalizeKeyPolicies(gatewayState.preservePolicySecretsLocked(body.KeyPolicies))
+	if validationError := validatePolicySet(policyConfig{}, incoming); validationError != "" {
+		return jsonResponse(http.StatusConflict, map[string]any{"error": validationError})
+	}
 	if mode == "replace" {
-		gatewayState.config.Default = normalizePolicy(body.DefaultPolicy)
+		nextDefault := normalizePolicy(body.DefaultPolicy)
+		if validationError := validatePolicySet(nextDefault, incoming); validationError != "" {
+			return jsonResponse(http.StatusConflict, map[string]any{"error": validationError})
+		}
+		gatewayState.config.Default = nextDefault
 		gatewayState.config.KeyPolicies = incoming
+		if err := gatewayState.savePersistentStateLocked(); err != nil {
+			return persistenceErrorResponse(err)
+		}
 		return jsonResponse(http.StatusOK, map[string]any{"ok": true, "mode": mode, "imported": len(incoming)})
 	}
 	merged := append([]keyPolicyConfig(nil), gatewayState.config.KeyPolicies...)
@@ -94,9 +114,18 @@ func routeImportPolicies(req pluginapi.ManagementRequest) (pluginapi.ManagementR
 		seen[candidateKeyID(item)] = len(merged) - 1
 		imported++
 	}
-	gatewayState.config.KeyPolicies = normalizeKeyPolicies(merged)
+	nextKeyPolicies := normalizeKeyPolicies(merged)
+	nextDefault := gatewayState.config.Default
 	if policyHasContent(body.DefaultPolicy) {
-		gatewayState.config.Default = normalizePolicy(body.DefaultPolicy)
+		nextDefault = normalizePolicy(body.DefaultPolicy)
+	}
+	if validationError := validatePolicySet(nextDefault, nextKeyPolicies); validationError != "" {
+		return jsonResponse(http.StatusConflict, map[string]any{"error": validationError})
+	}
+	gatewayState.config.Default = nextDefault
+	gatewayState.config.KeyPolicies = nextKeyPolicies
+	if err := gatewayState.savePersistentStateLocked(); err != nil {
+		return persistenceErrorResponse(err)
 	}
 	return jsonResponse(http.StatusOK, map[string]any{"ok": true, "mode": mode, "imported": imported, "updated": updated})
 }
@@ -121,6 +150,9 @@ func routeClonePolicy(req pluginapi.ManagementRequest) (pluginapi.ManagementResp
 		clone.DisplayName = strings.TrimSpace(item.DisplayName + nameSuffix)
 		clone.MatchAPIKey = ""
 		gatewayState.config.KeyPolicies = append(gatewayState.config.KeyPolicies, normalizeKeyPolicies([]keyPolicyConfig{clone})[0])
+		if err := gatewayState.savePersistentStateLocked(); err != nil {
+			return persistenceErrorResponse(err)
+		}
 		return jsonResponse(http.StatusCreated, map[string]any{"ok": true, "key_id": clone.KeyID})
 	}
 	return jsonResponse(http.StatusNotFound, map[string]any{"error": "policy not found"})
@@ -155,6 +187,9 @@ func routeAddPolicy(req pluginapi.ManagementRequest) (pluginapi.ManagementRespon
 		}
 	}
 	gatewayState.config.KeyPolicies = append(gatewayState.config.KeyPolicies, normalizeKeyPolicies([]keyPolicyConfig{body})[0])
+	if err := gatewayState.savePersistentStateLocked(); err != nil {
+		return persistenceErrorResponse(err)
+	}
 	return jsonResponse(http.StatusCreated, map[string]any{"ok": true})
 }
 
@@ -164,7 +199,6 @@ func routeDeletePolicy(req pluginapi.ManagementRequest) (pluginapi.ManagementRes
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "key_id query is required"})
 	}
 	gatewayState.mu.Lock()
-	defer gatewayState.mu.Unlock()
 	out := make([]keyPolicyConfig, 0, len(gatewayState.config.KeyPolicies))
 	removed := false
 	for _, item := range gatewayState.config.KeyPolicies {
@@ -175,11 +209,23 @@ func routeDeletePolicy(req pluginapi.ManagementRequest) (pluginapi.ManagementRes
 		out = append(out, item)
 	}
 	if !removed {
+		gatewayState.mu.Unlock()
 		return jsonResponse(http.StatusNotFound, map[string]any{"error": "policy not found"})
 	}
 	gatewayState.config.KeyPolicies = out
 	delete(gatewayState.usage, keyID)
 	delete(gatewayState.requestWindow, keyID)
+	redisCounters := gatewayState.redisCounters
+	if err := gatewayState.savePersistentStateLocked(); err != nil {
+		gatewayState.mu.Unlock()
+		return persistenceErrorResponse(err)
+	}
+	gatewayState.mu.Unlock()
+	if redisCounters != nil {
+		if err := redisCounters.reset(keyID); err != nil {
+			return persistenceErrorResponse(err)
+		}
+	}
 	return jsonResponse(http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -205,10 +251,54 @@ func routePatchPolicy(req pluginapi.ManagementRequest) (pluginapi.ManagementResp
 		if strings.TrimSpace(body.MatchAPIKey) == "" {
 			body.MatchAPIKey = gatewayState.config.KeyPolicies[i].MatchAPIKey
 		}
-		gatewayState.config.KeyPolicies[i] = normalizeKeyPolicies([]keyPolicyConfig{body})[0]
+		nextPolicy := normalizeKeyPolicies([]keyPolicyConfig{body})[0]
+		if duplicate := duplicateRuleID(nextPolicy.Rules); duplicate != "" {
+			return jsonResponse(http.StatusConflict, map[string]any{"error": "duplicate rule id in policy: " + duplicate})
+		}
+		gatewayState.config.KeyPolicies[i] = nextPolicy
+		if err := gatewayState.savePersistentStateLocked(); err != nil {
+			return persistenceErrorResponse(err)
+		}
 		return jsonResponse(http.StatusOK, map[string]any{"ok": true})
 	}
 	return jsonResponse(http.StatusNotFound, map[string]any{"error": "policy not found"})
+}
+
+func validatePolicySet(defaultPolicy policyConfig, items []keyPolicyConfig) string {
+	if duplicate := duplicateRuleID(defaultPolicy.Rules); duplicate != "" {
+		return "duplicate rule id in default policy: " + duplicate
+	}
+	seenPolicies := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		keyID := strings.ToLower(strings.TrimSpace(candidateKeyID(item)))
+		if keyID == "" {
+			return "policy id is required"
+		}
+		if _, exists := seenPolicies[keyID]; exists {
+			return "duplicate policy id: " + candidateKeyID(item)
+		}
+		seenPolicies[keyID] = struct{}{}
+		if duplicate := duplicateRuleID(item.Rules); duplicate != "" {
+			return "duplicate rule id in policy " + candidateKeyID(item) + ": " + duplicate
+		}
+	}
+	return ""
+}
+
+func duplicateRuleID(rules []ruleConfig) string {
+	seen := make(map[string]struct{}, len(rules))
+	for _, rule := range rules {
+		id := strings.TrimSpace(rule.ID)
+		if id == "" {
+			continue
+		}
+		key := strings.ToLower(id)
+		if _, exists := seen[key]; exists {
+			return id
+		}
+		seen[key] = struct{}{}
+	}
+	return ""
 }
 
 func routeAddRule(req pluginapi.ManagementRequest) (pluginapi.ManagementResponse, error) {
@@ -224,7 +314,7 @@ func routeAddRule(req pluginapi.ManagementRequest) (pluginapi.ManagementResponse
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
 	if strings.TrimSpace(body.ID) == "" {
-		body.ID = "rule-" + time.Now().Format("20060102150405")
+		body.ID = fmt.Sprintf("rule-%d", time.Now().UnixNano())
 	}
 	gatewayState.mu.Lock()
 	defer gatewayState.mu.Unlock()
@@ -232,8 +322,16 @@ func routeAddRule(req pluginapi.ManagementRequest) (pluginapi.ManagementResponse
 		if candidateKeyID(gatewayState.config.KeyPolicies[i]) != keyID {
 			continue
 		}
+		for _, existing := range gatewayState.config.KeyPolicies[i].Rules {
+			if strings.EqualFold(strings.TrimSpace(existing.ID), strings.TrimSpace(body.ID)) {
+				return jsonResponse(http.StatusConflict, map[string]any{"error": "rule id already exists"})
+			}
+		}
 		gatewayState.config.KeyPolicies[i].Rules = append(gatewayState.config.KeyPolicies[i].Rules, body)
 		gatewayState.config.KeyPolicies[i] = normalizeKeyPolicies([]keyPolicyConfig{gatewayState.config.KeyPolicies[i]})[0]
+		if err := gatewayState.savePersistentStateLocked(); err != nil {
+			return persistenceErrorResponse(err)
+		}
 		return jsonResponse(http.StatusCreated, map[string]any{"ok": true})
 	}
 	return jsonResponse(http.StatusNotFound, map[string]any{"error": "policy not found"})
@@ -265,6 +363,9 @@ func routePatchRule(req pluginapi.ManagementRequest) (pluginapi.ManagementRespon
 			body.ID = ruleID
 			gatewayState.config.KeyPolicies[i].Rules[j] = body
 			gatewayState.config.KeyPolicies[i] = normalizeKeyPolicies([]keyPolicyConfig{gatewayState.config.KeyPolicies[i]})[0]
+			if err := gatewayState.savePersistentStateLocked(); err != nil {
+				return persistenceErrorResponse(err)
+			}
 			return jsonResponse(http.StatusOK, map[string]any{"ok": true})
 		}
 	}
@@ -297,6 +398,9 @@ func routeDeleteRule(req pluginapi.ManagementRequest) (pluginapi.ManagementRespo
 		}
 		gatewayState.config.KeyPolicies[i].Rules = out
 		gatewayState.config.KeyPolicies[i] = normalizeKeyPolicies([]keyPolicyConfig{gatewayState.config.KeyPolicies[i]})[0]
+		if err := gatewayState.savePersistentStateLocked(); err != nil {
+			return persistenceErrorResponse(err)
+		}
 		return jsonResponse(http.StatusOK, map[string]any{"ok": true})
 	}
 	return jsonResponse(http.StatusNotFound, map[string]any{"error": "policy not found"})
@@ -307,17 +411,23 @@ func routeResetUsage(req pluginapi.ManagementRequest) (pluginapi.ManagementRespo
 	if keyID == "" {
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": "key_id query is required"})
 	}
-	gatewayState.mu.Lock()
-	defer gatewayState.mu.Unlock()
-	delete(gatewayState.usage, keyID)
-	delete(gatewayState.requestWindow, keyID)
+	if err := gatewayState.resetUsage(keyID); err != nil {
+		return persistenceErrorResponse(err)
+	}
 	return jsonResponse(http.StatusOK, map[string]any{"ok": true})
 }
 
-func routeUI(_ pluginapi.ManagementRequest) (pluginapi.ManagementResponse, error) {
+func routeUI(req pluginapi.ManagementRequest) (pluginapi.ManagementResponse, error) {
+	if !gatewayState.uiAuthorized(req) {
+		return pluginapi.ManagementResponse{
+			StatusCode: http.StatusForbidden,
+			Headers:    http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
+			Body:       []byte("gateway UI permission denied"),
+		}, nil
+	}
 	return pluginapi.ManagementResponse{
 		StatusCode: http.StatusOK,
-		Headers:    http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+		Headers:    http.Header{"Content-Type": []string{"text/html; charset=utf-8"}, "Content-Security-Policy": []string{gatewayContentSecurityPolicy}},
 		Body:       []byte(gatewayUIHTML()),
 	}, nil
 }
@@ -446,7 +556,7 @@ func routeAddTemplate(req pluginapi.ManagementRequest) (pluginapi.ManagementResp
 		return jsonResponse(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
 	if strings.TrimSpace(body.ID) == "" {
-		body.ID = "template-" + time.Now().Format("20060102150405")
+		body.ID = fmt.Sprintf("template-%d", time.Now().UnixNano())
 	}
 	if strings.TrimSpace(body.Name) == "" {
 		body.Name = body.ID
@@ -459,6 +569,9 @@ func routeAddTemplate(req pluginapi.ManagementRequest) (pluginapi.ManagementResp
 		}
 	}
 	gatewayState.templates = append(gatewayState.templates, body)
+	if err := gatewayState.savePersistentStateLocked(); err != nil {
+		return persistenceErrorResponse(err)
+	}
 	return jsonResponse(http.StatusCreated, map[string]any{"ok": true})
 }
 
@@ -482,6 +595,9 @@ func routeDeleteTemplate(req pluginapi.ManagementRequest) (pluginapi.ManagementR
 		return jsonResponse(http.StatusNotFound, map[string]any{"error": "template not found"})
 	}
 	gatewayState.templates = out
+	if err := gatewayState.savePersistentStateLocked(); err != nil {
+		return persistenceErrorResponse(err)
+	}
 	return jsonResponse(http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -497,12 +613,34 @@ func routeCloneTemplate(req pluginapi.ManagementRequest) (pluginapi.ManagementRe
 			continue
 		}
 		clone := item
-		clone.ID = clone.ID + "-copy"
+		clone.ID = nextTemplateCloneID(gatewayState.templates, clone.ID)
 		clone.Name = clone.Name + " Copy"
 		gatewayState.templates = append(gatewayState.templates, clone)
+		if err := gatewayState.savePersistentStateLocked(); err != nil {
+			return persistenceErrorResponse(err)
+		}
 		return jsonResponse(http.StatusCreated, map[string]any{"ok": true, "id": clone.ID})
 	}
 	return jsonResponse(http.StatusNotFound, map[string]any{"error": "template not found"})
+}
+
+func nextTemplateCloneID(items []ruleTemplate, sourceID string) string {
+	base := strings.TrimSpace(sourceID)
+	if base == "" {
+		base = "template"
+	}
+	base += "-copy"
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		seen[strings.ToLower(strings.TrimSpace(item.ID))] = struct{}{}
+	}
+	candidate := base
+	for i := 2; ; i++ {
+		if _, exists := seen[strings.ToLower(candidate)]; !exists {
+			return candidate
+		}
+		candidate = fmt.Sprintf("%s-%d", base, i)
+	}
 }
 
 func routePatchTemplate(req pluginapi.ManagementRequest) (pluginapi.ManagementResponse, error) {
@@ -528,6 +666,9 @@ func routePatchTemplate(req pluginapi.ManagementRequest) (pluginapi.ManagementRe
 			body.Name = templateID
 		}
 		gatewayState.templates[i] = body
+		if err := gatewayState.savePersistentStateLocked(); err != nil {
+			return persistenceErrorResponse(err)
+		}
 		return jsonResponse(http.StatusOK, map[string]any{"ok": true})
 	}
 	return jsonResponse(http.StatusNotFound, map[string]any{"error": "template not found"})
@@ -558,7 +699,7 @@ func routeImportTemplates(req pluginapi.ManagementRequest) (pluginapi.Management
 	imported := 0
 	for _, item := range body.Items {
 		if strings.TrimSpace(item.ID) == "" {
-			item.ID = "template-" + time.Now().Format("20060102150405")
+			item.ID = fmt.Sprintf("template-%d-%d", time.Now().UnixNano(), imported)
 		}
 		key := strings.ToLower(strings.TrimSpace(item.ID))
 		if _, exists := seen[key]; exists {
@@ -570,6 +711,9 @@ func routeImportTemplates(req pluginapi.ManagementRequest) (pluginapi.Management
 		gatewayState.templates = append(gatewayState.templates, item)
 		seen[key] = struct{}{}
 		imported++
+	}
+	if err := gatewayState.savePersistentStateLocked(); err != nil {
+		return persistenceErrorResponse(err)
 	}
 	return jsonResponse(http.StatusOK, map[string]any{"ok": true, "imported": imported})
 }
@@ -584,4 +728,8 @@ func routeDryRun(req pluginapi.ManagementRequest) (pluginapi.ManagementResponse,
 	}
 	result := gatewayState.evaluateDryRun(body)
 	return jsonResponse(http.StatusOK, result)
+}
+
+func persistenceErrorResponse(err error) (pluginapi.ManagementResponse, error) {
+	return jsonResponse(http.StatusInternalServerError, map[string]any{"error": "persist gateway state: " + err.Error()})
 }

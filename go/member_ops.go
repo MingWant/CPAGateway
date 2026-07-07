@@ -50,7 +50,7 @@ func findMemberOperationRulePreview(body memberOperationRequest) (ruleConfig, []
 				continue
 			}
 			members := cloneWeightedRoutes(rule.Actions.WeightedRoutes)
-			if len(rule.Actions.RoutePool.Members) > 0 {
+			if rule.Actions.RoutePool != nil && len(rule.Actions.RoutePool.Members) > 0 {
 				members = cloneWeightedRoutes(rule.Actions.RoutePool.Members)
 			}
 			beforeMembers := cloneWeightedRoutes(members)
@@ -361,9 +361,9 @@ func findMemberOperationRuleApply(body memberOperationRequest) (*keyPolicyConfig
 			if strings.TrimSpace(rule.ID) != body.RuleID {
 				continue
 			}
-			members := rule.Actions.WeightedRoutes
-			if len(rule.Actions.RoutePool.Members) > 0 {
-				members = rule.Actions.RoutePool.Members
+			members := cloneWeightedRoutes(rule.Actions.WeightedRoutes)
+			if rule.Actions.RoutePool != nil && len(rule.Actions.RoutePool.Members) > 0 {
+				members = cloneWeightedRoutes(rule.Actions.RoutePool.Members)
 			}
 			beforeMembers := cloneWeightedRoutes(members)
 			return &gatewayState.config.KeyPolicies[i], rule, members, beforeMembers, pluginapi.ManagementResponse{}, true
@@ -406,21 +406,25 @@ func routeMemberOperation(req pluginapi.ManagementRequest) (pluginapi.Management
 	if !updated {
 		return jsonResponse(http.StatusNotFound, map[string]any{"error": "member not found"})
 	}
-	rule.Actions.WeightedRoutes = members
-	if rule.Actions.RoutePool != nil {
-		rule.Actions.RoutePool.Members = members
-	}
-	*policy = normalizeKeyPolicies([]keyPolicyConfig{*policy})[0]
 	result := buildMemberOperationResult(body, beforeMembers, members)
 	if tokenRecord != nil && tokenRecord.AfterState != result.AfterState {
 		delete(gatewayState.previewTokens, strings.TrimSpace(body.PreviewToken))
 		return jsonResponse(http.StatusConflict, map[string]any{"error": "preview token result mismatch; preview the operation again"})
 	}
+	if rule.Actions.RoutePool != nil && len(rule.Actions.RoutePool.Members) > 0 {
+		rule.Actions.RoutePool.Members = members
+	} else {
+		rule.Actions.WeightedRoutes = members
+	}
+	*policy = normalizeKeyPolicies([]keyPolicyConfig{*policy})[0]
 	if tokenRecord != nil {
 		delete(gatewayState.previewTokens, strings.TrimSpace(body.PreviewToken))
 	}
 	preview := memberOperationPreview{memberOperationResult: result}
 	gatewayState.appendAuditLocked(auditEntry{Time: time.Now(), PolicyID: policy.KeyID, PolicyName: policy.DisplayName, Decision: "operator", RuleID: rule.ID, Reason: result.Reason, FinalModel: result.TargetMember, Provider: providerFromModel(result.TargetMember), EventType: "operator", OperatorAction: body.Operation, TargetMember: result.TargetMember, Secondary: body.Secondary, BeforeState: result.BeforeState, AfterState: result.AfterState, Diff: result.Diff})
+	if err := gatewayState.savePersistentStateLocked(); err != nil {
+		return persistenceErrorResponse(err)
+	}
 	return jsonResponse(http.StatusOK, map[string]any{"ok": true, "members": members, "preview": preview, "result": result})
 }
 

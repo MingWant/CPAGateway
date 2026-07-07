@@ -2,7 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,8 +131,15 @@ func TestRouteCloneTemplate(t *testing.T) {
 	if err != nil || resp.StatusCode != http.StatusCreated {
 		t.Fatalf("routeCloneTemplate() = %#v, %v", resp, err)
 	}
-	if len(gatewayState.templates) != 2 {
-		t.Fatalf("templates len = %d, want 2", len(gatewayState.templates))
+	resp, err = routeCloneTemplate(pluginapi.ManagementRequest{Query: map[string][]string{"template_id": {"tpl-1"}}})
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		t.Fatalf("routeCloneTemplate() second clone = %#v, %v", resp, err)
+	}
+	if len(gatewayState.templates) != 3 {
+		t.Fatalf("templates len = %d, want 3", len(gatewayState.templates))
+	}
+	if gatewayState.templates[1].ID == gatewayState.templates[2].ID {
+		t.Fatalf("clone template IDs should be unique: %#v", gatewayState.templates)
 	}
 }
 
@@ -145,6 +155,24 @@ func TestRouteImportAndExportTemplates(t *testing.T) {
 	}
 	if len(gatewayState.templates) == 0 {
 		t.Fatal("expected templates after import")
+	}
+}
+
+func TestRouteImportTemplatesAssignsUniqueIDs(t *testing.T) {
+	gatewayState = newPluginState()
+	resp, err := routeImportTemplates(pluginapi.ManagementRequest{Body: []byte(`{"items":[{"name":"A"},{"name":"B"}]}`)})
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("routeImportTemplates() = %#v, %v", resp, err)
+	}
+	seen := map[string]struct{}{}
+	for _, item := range gatewayState.templates {
+		if strings.TrimSpace(item.ID) == "" {
+			t.Fatalf("template missing ID: %#v", item)
+		}
+		if _, exists := seen[item.ID]; exists {
+			t.Fatalf("duplicate template ID after import: %#v", gatewayState.templates)
+		}
+		seen[item.ID] = struct{}{}
 	}
 }
 
@@ -167,6 +195,60 @@ func TestGatewayUIIncludesContentSecurityPolicy(t *testing.T) {
 	html := gatewayUIHTML()
 	if !contains(html, "Content-Security-Policy") || !contains(html, "script-src 'nonce-gateway-ui'") || !contains(html, `<script nonce="gateway-ui">`) {
 		t.Fatalf("gateway UI missing CSP nonce protection")
+	}
+}
+
+func TestRouteUIIncludesContentSecurityPolicyHeader(t *testing.T) {
+	gatewayState = newPluginState()
+	resp, err := routeUI(pluginapi.ManagementRequest{})
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("routeUI() = %#v, %v", resp, err)
+	}
+	if got := resp.Headers.Get("Content-Security-Policy"); got != gatewayContentSecurityPolicy {
+		t.Fatalf("CSP header = %q, want %q", got, gatewayContentSecurityPolicy)
+	}
+}
+
+func TestGatewayUIInstallsDynamicHTMLSanitizer(t *testing.T) {
+	html := gatewayUIHTML()
+	if !contains(html, "function sanitizeHTML") || !contains(html, "Object.defineProperty(Element.prototype, 'innerHTML'") {
+		t.Fatalf("gateway UI missing dynamic HTML sanitizer")
+	}
+	if !contains(html, "name.startsWith('on')") || !contains(html, "value.startsWith('javascript:')") {
+		t.Fatalf("gateway UI sanitizer is missing event or javascript URL filtering")
+	}
+	if !contains(html, "name === 'style'") || !contains(html, "style,svg,math,form") {
+		t.Fatalf("gateway UI sanitizer is missing style or embedded-content filtering")
+	}
+}
+
+func TestGatewayUIDefinesRouteBuilderHelpers(t *testing.T) {
+	html := gatewayUIHTML()
+	required := []string{
+		"function parseCSV",
+		"function weightedRoutes",
+		"function renderWeightedRoutes",
+		"function renderConditionGroups",
+		"function apiURL",
+		"gateway_token=' + encodeURIComponent(gatewayTokenParam)",
+		"addFailoverHopBtn').addEventListener",
+		"const failover = el('ruleFailoverChainInput').value.trim()",
+		"const routePoolName = el('routePoolNameInput').value.trim()",
+	}
+	for _, item := range required {
+		if !contains(html, item) {
+			t.Fatalf("gateway UI missing route builder helper %q", item)
+		}
+	}
+}
+
+func TestGatewayUIAvoidsDynamicInnerHTMLRendering(t *testing.T) {
+	html := gatewayUIHTML()
+	forbidden := []string{"root.innerHTML", "node.innerHTML", "policyNode.innerHTML", "stageNode.innerHTML", "child.innerHTML"}
+	for _, item := range forbidden {
+		if strings.Contains(html, item) {
+			t.Fatalf("gateway UI should not use dynamic innerHTML rendering: found %q", item)
+		}
 	}
 }
 
@@ -242,6 +324,25 @@ func TestMatchRuleSupportsPathHeaderAndMetadataConditions(t *testing.T) {
 	}
 }
 
+func TestMatchRuleSupportsOvernightTimeWindow(t *testing.T) {
+	now := time.Date(2026, 7, 5, 1, 30, 0, 0, time.Local)
+	ok, reason := matchRule(pluginapi.RequestInterceptRequest{Headers: http.Header{}}, "gpt-5.5", matchConfig{Start: "22:00", End: "02:00"}, now)
+	if !ok || reason != "matched" {
+		t.Fatalf("overnight matchRule() = %v, %q, want true/matched", ok, reason)
+	}
+}
+
+func TestWithinSchedulesSupportsOvernightWindow(t *testing.T) {
+	now := time.Date(2026, 7, 5, 1, 30, 0, 0, time.Local)
+	if !withinSchedules([]scheduleConfig{{Start: "22:00", End: "02:00"}}, now) {
+		t.Fatal("expected overnight schedule to match at 01:30")
+	}
+	daytime := time.Date(2026, 7, 5, 12, 0, 0, 0, time.Local)
+	if withinSchedules([]scheduleConfig{{Start: "22:00", End: "02:00"}}, daytime) {
+		t.Fatal("overnight schedule should not match at noon")
+	}
+}
+
 func TestPluginStateUsageRecordReleasesInflight(t *testing.T) {
 	state := newPluginState()
 	state.config = pluginConfig{Default: policyConfig{Enabled: true, Limits: limitConfig{MaxInflight: 1}}}
@@ -283,6 +384,15 @@ func TestRouteAddPatchAndDeleteRuleOnExistingPolicy(t *testing.T) {
 	delResp, err := routeDeleteRule(pluginapi.ManagementRequest{Query: map[string][]string{"key_id": {"policy-1"}, "rule_id": {"rule-1"}}})
 	if err != nil || delResp.StatusCode != http.StatusOK {
 		t.Fatalf("routeDeleteRule() = %#v, %v", delResp, err)
+	}
+}
+
+func TestRouteAddRuleRejectsDuplicateRuleID(t *testing.T) {
+	gatewayState = newPluginState()
+	gatewayState.config = pluginConfig{KeyPolicies: []keyPolicyConfig{{KeyID: "policy-1", DisplayName: "Key 1", Enabled: true, Rules: []ruleConfig{{ID: "rule-1", Enabled: true}}}}}
+	resp, err := routeAddRule(pluginapi.ManagementRequest{Query: map[string][]string{"key_id": {"policy-1"}}, Body: []byte(`{"id":"rule-1","enabled":true,"priority":10,"on_match":"stop"}`)})
+	if err != nil || resp.StatusCode != http.StatusConflict {
+		t.Fatalf("duplicate routeAddRule() = %#v, %v; want conflict", resp, err)
 	}
 }
 
@@ -380,6 +490,256 @@ func TestRoutePutPoliciesPreservesExistingSecretForSanitizedPayload(t *testing.T
 	}
 	if got := gatewayState.config.KeyPolicies[0].MatchAPIKey; got != "secret-1" {
 		t.Fatalf("preserved secret = %q, want secret-1", got)
+	}
+}
+
+func TestRoutePutPoliciesRejectsDuplicatePolicyAndRuleIDs(t *testing.T) {
+	gatewayState = newPluginState()
+	resp, err := routePutPolicies(pluginapi.ManagementRequest{Body: []byte(`{"version":1,"key_policies":[{"key_id":"policy-1","display_name":"A","enabled":true},{"key_id":"policy-1","display_name":"B","enabled":true}]}`)})
+	if err != nil || resp.StatusCode != http.StatusConflict {
+		t.Fatalf("duplicate policy IDs = %#v, %v; want conflict", resp, err)
+	}
+	resp, err = routePutPolicies(pluginapi.ManagementRequest{Body: []byte(`{"version":1,"key_policies":[{"key_id":"policy-2","display_name":"A","enabled":true,"rules":[{"id":"rule-1","enabled":true},{"id":"rule-1","enabled":true}]}]}`)})
+	if err != nil || resp.StatusCode != http.StatusConflict {
+		t.Fatalf("duplicate rule IDs = %#v, %v; want conflict", resp, err)
+	}
+}
+
+func TestPersistentStateSurvivesReload(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "gateway-state.json")
+	gatewayState = newPluginState()
+	gatewayState.config = pluginConfig{Persistence: persistenceConfig{StatePath: statePath}}
+	resp, err := routeAddPolicy(pluginapi.ManagementRequest{Body: []byte(`{"key_id":"policy-persist","display_name":"Persisted","match_api_key":"secret-persist","enabled":true}`)})
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		t.Fatalf("routeAddPolicy() = %#v, %v", resp, err)
+	}
+	resp, err = routeAddTemplate(pluginapi.ManagementRequest{Body: []byte(`{"id":"tpl-persist","name":"Persisted Template","description":"desc","rule":{"id":"rule-1","enabled":true,"priority":10,"on_match":"stop","match":{"models":["gpt-5.5"]},"actions":{"route_to_model":"openai/gpt-5.4"}}}`)})
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		t.Fatalf("routeAddTemplate() = %#v, %v", resp, err)
+	}
+
+	gatewayState = newPluginState()
+	gatewayState.config = pluginConfig{Persistence: persistenceConfig{StatePath: statePath}}
+	if err := gatewayState.loadPersistentState(); err != nil {
+		t.Fatalf("loadPersistentState(): %v", err)
+	}
+	if len(gatewayState.config.KeyPolicies) != 1 || gatewayState.config.KeyPolicies[0].MatchAPIKey != "secret-persist" {
+		t.Fatalf("loaded policies = %#v", gatewayState.config.KeyPolicies)
+	}
+	foundTemplate := false
+	for _, item := range gatewayState.templates {
+		if item.ID == "tpl-persist" {
+			foundTemplate = true
+		}
+	}
+	if !foundTemplate {
+		t.Fatalf("loaded templates = %#v", gatewayState.templates)
+	}
+}
+
+func TestPersistentRuntimeUsageSurvivesReload(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "gateway-runtime.json")
+	gatewayState = newPluginState()
+	gatewayState.config = pluginConfig{Persistence: persistenceConfig{StatePath: statePath, PersistRuntime: true}, Default: policyConfig{Enabled: true}}
+	req := pluginapi.RequestInterceptRequest{Headers: http.Header{}, Body: []byte(`{"model":"gpt-5.5"}`), Metadata: map[string]any{"access.api_key": "abc"}}
+	resp := gatewayState.apply(req, false)
+	if resp.Reject {
+		t.Fatalf("apply rejected unexpectedly: %#v", resp)
+	}
+	gatewayState.recordUsage(pluginapi.UsageRecord{APIKey: "abc", Detail: pluginapi.UsageDetail{TotalTokens: 7}})
+
+	gatewayState = newPluginState()
+	gatewayState.config = pluginConfig{Persistence: persistenceConfig{StatePath: statePath, PersistRuntime: true}}
+	if err := gatewayState.loadPersistentState(); err != nil {
+		t.Fatalf("loadPersistentState(): %v", err)
+	}
+	usage := gatewayState.usage[stableKeyID("abc")]
+	if usage == nil || usage.TokensToday != 7 || usage.RequestsToday != 1 {
+		t.Fatalf("loaded runtime usage = %#v", usage)
+	}
+}
+
+func TestManagementAuthorizationRequiresConfiguredTokens(t *testing.T) {
+	gatewayState = newPluginState()
+	gatewayState.config = pluginConfig{Security: securityConfig{RequireManagementToken: true, AdminTokens: []string{"admin-token"}, ReadTokens: []string{"read-token"}}}
+	readHandler := authorizedHandler(roleRead, routeKeys)
+	writeHandler := authorizedHandler(roleAdmin, routeAddPolicy)
+	resp, err := readHandler(pluginapi.ManagementRequest{})
+	if err != nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("read without token = %#v, %v", resp, err)
+	}
+	resp, err = readHandler(pluginapi.ManagementRequest{Headers: http.Header{"Authorization": {"Bearer read-token"}}})
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("read with read token = %#v, %v", resp, err)
+	}
+	resp, err = writeHandler(pluginapi.ManagementRequest{Headers: http.Header{"Authorization": {"Bearer read-token"}}, Body: []byte(`{"display_name":"Denied","match_api_key":"secret"}`)})
+	if err != nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("write with read token = %#v, %v", resp, err)
+	}
+	resp, err = writeHandler(pluginapi.ManagementRequest{Headers: http.Header{"Authorization": {"Bearer admin-token"}}, Body: []byte(`{"display_name":"Allowed","match_api_key":"secret"}`)})
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		t.Fatalf("write with admin token = %#v, %v", resp, err)
+	}
+}
+
+func TestRouteUIRequiresConfiguredUIToken(t *testing.T) {
+	gatewayState = newPluginState()
+	gatewayState.config = pluginConfig{Security: securityConfig{UIAccessTokens: []string{"ui-token"}}}
+	resp, err := routeUI(pluginapi.ManagementRequest{})
+	if err != nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("routeUI without token = %#v, %v", resp, err)
+	}
+	resp, err = routeUI(pluginapi.ManagementRequest{Query: map[string][]string{"gateway_token": {"ui-token"}}})
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("routeUI with token = %#v, %v", resp, err)
+	}
+
+	gatewayState.config = pluginConfig{Security: securityConfig{RequireManagementToken: true, ReadTokens: []string{"read-token"}}}
+	resp, err = routeUI(pluginapi.ManagementRequest{})
+	if err != nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("routeUI with management token required but no token = %#v, %v", resp, err)
+	}
+	resp, err = routeUI(pluginapi.ManagementRequest{Query: map[string][]string{"gateway_token": {"read-token"}}})
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("routeUI with read token = %#v, %v", resp, err)
+	}
+}
+
+func TestRouteHealthReportsLocalCountersAndNoSecrets(t *testing.T) {
+	gatewayState = newPluginState()
+	gatewayState.config = normalizeConfig(pluginConfig{
+		Persistence: persistenceConfig{StatePath: filepath.Join(t.TempDir(), "gateway-state.json"), PersistRuntime: true},
+		Security: securityConfig{
+			RequireManagementToken: true,
+			AdminTokens:            []string{"admin-secret"},
+			ReadTokens:             []string{"read-secret"},
+			UIAccessTokens:         []string{"ui-secret"},
+		},
+		Cluster: clusterConfig{Redis: redisConfig{Password: "redis-secret"}},
+		KeyPolicies: []keyPolicyConfig{{
+			KeyID:       "policy-1",
+			DisplayName: "Policy 1",
+			MatchAPIKey: "api-key-secret",
+			Enabled:     true,
+			Rules:       []ruleConfig{{ID: "rule-1", Enabled: true, Priority: 10, OnMatch: "stop"}},
+		}},
+	})
+	resp, err := routeHealth(pluginapi.ManagementRequest{})
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("routeHealth() = %#v, %v", resp, err)
+	}
+	var health gatewayHealth
+	if err := json.Unmarshal(resp.Body, &health); err != nil {
+		t.Fatalf("unmarshal health: %v", err)
+	}
+	if health.Counters.Backend != "local" || health.Counters.RedisRequired {
+		t.Fatalf("counter health = %#v, want local and redis not required", health.Counters)
+	}
+	if health.Security.AdminTokenCount != 1 || health.Security.ReadTokenCount != 1 || health.Security.UITokenCount != 1 {
+		t.Fatalf("security health = %#v, want token counts only", health.Security)
+	}
+	if health.Counts.KeyPolicies != 1 || health.Counts.Rules != 1 {
+		t.Fatalf("counts = %#v, want one policy and one rule", health.Counts)
+	}
+	body := string(resp.Body)
+	for _, secret := range []string{"api-key-secret", "admin-secret", "read-secret", "ui-secret", "redis-secret"} {
+		if contains(body, secret) {
+			t.Fatalf("routeHealth leaked secret %q in %s", secret, body)
+		}
+	}
+}
+
+func TestHealthSnapshotReportsRedisRequiredOnlyWhenConfigured(t *testing.T) {
+	gatewayState = newPluginState()
+	gatewayState.config = normalizeConfig(pluginConfig{Cluster: clusterConfig{Backend: "redis"}})
+	health := gatewayState.healthSnapshot()
+	if health.Counters.Backend != "redis" || !health.Counters.RedisRequired || health.Status != "degraded" {
+		t.Fatalf("redis health = %#v, want redis required and degraded when store is missing", health)
+	}
+}
+
+func TestHealthSeparatesUIAuthFromManagementAPIAuth(t *testing.T) {
+	gatewayState = newPluginState()
+	gatewayState.config = pluginConfig{Security: securityConfig{UIAccessTokens: []string{"ui-token"}}}
+	health := gatewayState.healthSnapshot()
+	if health.Security.ManagementAuthEnabled {
+		t.Fatalf("management auth should be false when only UI tokens are configured: %#v", health.Security)
+	}
+	if !health.Security.UIAuthEnabled {
+		t.Fatalf("UI auth should be true when UI tokens are configured: %#v", health.Security)
+	}
+}
+
+func TestRedisCounterStoreIsConfiguredOnlyForRedisBackend(t *testing.T) {
+	if store := newRedisCounterStore(clusterConfig{}); store != nil {
+		t.Fatalf("default counter store = %#v, want nil", store)
+	}
+	store := newRedisCounterStore(clusterConfig{Backend: "redis", Redis: redisConfig{Addr: "127.0.0.1:6379", KeyPrefix: "test-gateway"}})
+	if store == nil {
+		t.Fatal("redis counter store is nil")
+	}
+	if got := store.keysKey(); got != "test-gateway:usage-keys" {
+		t.Fatalf("redis keys key = %q", got)
+	}
+}
+
+func TestNormalizeRedisFailureMode(t *testing.T) {
+	cases := map[string]string{
+		"":               "reject",
+		"fail-open":      "allow",
+		"fail_closed":    "reject",
+		"local":          "local_fallback",
+		"local-fallback": "local_fallback",
+		"unexpected":     "reject",
+	}
+	for raw, want := range cases {
+		got := normalizeConfig(pluginConfig{Cluster: clusterConfig{Backend: " Redis ", Redis: redisConfig{FailureMode: raw}}})
+		if got.Cluster.Backend != "redis" || got.Cluster.Redis.FailureMode != want {
+			t.Fatalf("normalize failure mode %q = backend %q mode %q, want redis/%s", raw, got.Cluster.Backend, got.Cluster.Redis.FailureMode, want)
+		}
+	}
+}
+
+func TestCounterBackendUnavailableFailureModes(t *testing.T) {
+	reject := redisUnavailableResponse(errors.New("redis unavailable"))
+
+	gatewayState = newPluginState()
+	gatewayState.config = normalizeConfig(pluginConfig{Cluster: clusterConfig{Backend: "redis", Redis: redisConfig{FailureMode: "allow"}}})
+	if got := gatewayState.handleCounterBackendUnavailable(reject, "key-1", "Key 1", "***", limitConfig{MaxInflight: 1}, time.Now(), true); got != nil {
+		t.Fatalf("allow failure mode rejected: %#v", got)
+	}
+
+	gatewayState = newPluginState()
+	gatewayState.config = normalizeConfig(pluginConfig{Cluster: clusterConfig{Backend: "redis", Redis: redisConfig{FailureMode: "local_fallback"}}})
+	if got := gatewayState.handleCounterBackendUnavailable(reject, "key-1", "Key 1", "***", limitConfig{MaxInflight: 1}, time.Now(), true); got != nil {
+		t.Fatalf("local fallback first request rejected: %#v", got)
+	}
+	if got := gatewayState.handleCounterBackendUnavailable(reject, "key-1", "Key 1", "***", limitConfig{MaxInflight: 1}, time.Now(), true); got == nil || got.RejectCode != "gateway_concurrency_exceeded" {
+		t.Fatalf("local fallback did not enforce local inflight: %#v", got)
+	}
+
+	gatewayState = newPluginState()
+	gatewayState.config = normalizeConfig(pluginConfig{Cluster: clusterConfig{Backend: "redis", Redis: redisConfig{FailureMode: "reject"}}})
+	if got := gatewayState.handleCounterBackendUnavailable(reject, "key-1", "Key 1", "***", limitConfig{}, time.Now(), true); got == nil || got.RejectCode != "gateway_counter_backend_unavailable" {
+		t.Fatalf("reject failure mode = %#v", got)
+	}
+}
+
+func TestRedisUnavailableResponseDoesNotLeakErrorDetails(t *testing.T) {
+	resp := redisUnavailableResponse(errors.New("dial tcp 10.0.0.12:6379: auth failed for redis-secret"))
+	if got := resp.Headers.Get("X-Gateway-Counter-Error"); got != "unavailable" {
+		t.Fatalf("counter error header = %q, want generic unavailable", got)
+	}
+	if contains(resp.RejectMessage, "10.0.0.12") || contains(resp.RejectMessage, "redis-secret") {
+		t.Fatalf("redis unavailable response leaked details: %#v", resp)
+	}
+}
+
+func TestRedisDryRunDoesNotRegisterUsageKey(t *testing.T) {
+	saddIndex := strings.Index(redisEnforceLua, "redis.call('SADD'")
+	enforceIndex := strings.Index(redisEnforceLua, "if ARGV[12] == '1' then")
+	if saddIndex < 0 || enforceIndex < 0 || saddIndex < enforceIndex {
+		t.Fatalf("redis enforce script should add usage keys only inside enforce block")
 	}
 }
 
@@ -609,6 +969,9 @@ func TestApplyRulesWithStagesContinueAllAllowsMultipleRewrites(t *testing.T) {
 	if result.FinalModel != "codex/gpt-5.4" {
 		t.Fatalf("final model = %q, want codex/gpt-5.4", result.FinalModel)
 	}
+	if result.Decision != "rewrite" || result.RuleID != "rewrite-2" {
+		t.Fatalf("decision = %s/%s, want rewrite/rewrite-2", result.Decision, result.RuleID)
+	}
 }
 
 func TestApplyRulesWithStagesFirstMatchStopsWithinStage(t *testing.T) {
@@ -619,6 +982,21 @@ func TestApplyRulesWithStagesFirstMatchStopsWithinStage(t *testing.T) {
 	result := applyRulesWithStages(pluginapi.RequestInterceptRequest{Model: "gpt-5.5", Headers: http.Header{}, Body: []byte(`{"model":"gpt-5.5"}`)}, policy, false, time.Now())
 	if result.FinalModel != "openai/gpt-5.4" {
 		t.Fatalf("final model = %q, want openai/gpt-5.4", result.FinalModel)
+	}
+	if result.Decision != "rewrite" || result.RuleID != "rewrite-1" {
+		t.Fatalf("decision = %s/%s, want rewrite/rewrite-1", result.Decision, result.RuleID)
+	}
+	rewriteTraceCount := 0
+	for _, item := range result.StageTrace {
+		if item.Stage == "rewrite" {
+			rewriteTraceCount++
+			if item.Decision != "rewrite" {
+				t.Fatalf("rewrite trace decision = %q, want rewrite: %#v", item.Decision, result.StageTrace)
+			}
+		}
+	}
+	if rewriteTraceCount != 1 {
+		t.Fatalf("rewrite trace count = %d, want 1: %#v", rewriteTraceCount, result.StageTrace)
 	}
 }
 
@@ -913,6 +1291,41 @@ func TestRouteMemberOperationRejectsPreviewTokenForDifferentTarget(t *testing.T)
 	}
 	if badResp.StatusCode != http.StatusForbidden {
 		t.Fatalf("bad target status = %d, want %d", badResp.StatusCode, http.StatusForbidden)
+	}
+}
+
+func TestRouteMemberOperationSupportsWeightedRoutesWithoutRoutePool(t *testing.T) {
+	gatewayState = newPluginState()
+	gatewayState.config = normalizeConfig(pluginConfig{KeyPolicies: []keyPolicyConfig{{KeyID: "policy-weighted", DisplayName: "Weighted Policy", Enabled: true, Rules: []ruleConfig{{ID: "rule-weighted", Enabled: true, Priority: 10, Stage: "route", OnMatch: "stop", Match: matchConfig{Models: []string{"gpt-5.5"}}, Actions: actionConfig{WeightedRoutes: []weightedRoute{{Model: "openai/gpt-5.4", Weight: 50}, {Model: "codex/gpt-5.4", Weight: 50}}}}}}}})
+
+	resp, err := applyMemberOperationForTest(t, `{"key_id":"policy-weighted","rule_id":"rule-weighted","member":"openai/gpt-5.4","operation":"weight-up","delta":5}`)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("weighted route member operation = %#v, %v", resp, err)
+	}
+	members := gatewayState.config.KeyPolicies[0].Rules[0].Actions.WeightedRoutes
+	if members[0].Weight != 55 {
+		t.Fatalf("weighted route weight = %d, want 55", members[0].Weight)
+	}
+}
+
+func TestRouteMemberOperationResultMismatchDoesNotMutatePolicy(t *testing.T) {
+	gatewayState = newPluginState()
+	gatewayState.config = normalizeConfig(pluginConfig{KeyPolicies: []keyPolicyConfig{{KeyID: "policy-mismatch", DisplayName: "Mismatch Policy", Enabled: true, Rules: []ruleConfig{{ID: "rule-mismatch", Enabled: true, Priority: 10, Stage: "route", OnMatch: "stop", Match: matchConfig{Models: []string{"gpt-5.5"}}, Actions: actionConfig{WeightedRoutes: []weightedRoute{{Model: "openai/gpt-5.4", Weight: 50}, {Model: "codex/gpt-5.4", Weight: 50}}}}}}}})
+	before := summarizeWeightedRoutes(gatewayState.config.KeyPolicies[0].Rules[0].Actions.WeightedRoutes)
+	issuedAt := time.Now()
+	token := signPreviewToken("policy-mismatch", "rule-mismatch", "weight-up", "openai/gpt-5.4", "", before, "wrong-after-state", issuedAt)
+	gatewayState.previewTokens[token] = previewTokenRecord{KeyID: "policy-mismatch", RuleID: "rule-mismatch", Operation: "weight-up", Target: "openai/gpt-5.4", BeforeState: before, AfterState: "wrong-after-state", Token: token, IssuedAt: issuedAt}
+
+	resp, err := routeMemberOperation(pluginapi.ManagementRequest{Body: []byte(`{"key_id":"policy-mismatch","rule_id":"rule-mismatch","member":"openai/gpt-5.4","operation":"weight-up","delta":5,"preview_token":"` + token + `"}`)})
+	if err != nil {
+		t.Fatalf("routeMemberOperation() err = %v", err)
+	}
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("result mismatch status = %d, want %d", resp.StatusCode, http.StatusConflict)
+	}
+	after := summarizeWeightedRoutes(gatewayState.config.KeyPolicies[0].Rules[0].Actions.WeightedRoutes)
+	if after != before {
+		t.Fatalf("policy mutated after rejected operation: before %q after %q", before, after)
 	}
 }
 

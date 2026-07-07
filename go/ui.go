@@ -1,12 +1,14 @@
 package main
 
+const gatewayContentSecurityPolicy = "default-src 'none'; script-src 'nonce-gateway-ui'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'"
+
 func gatewayUIHTML() string {
 	return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-gateway-ui'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="` + gatewayContentSecurityPolicy + `">
 <title>Gateway Manager</title>
 <style>
 :root{--bg:#f3efe7;--panel:#fffaf2;--ink:#18262a;--muted:#68767a;--line:#d8cfbf;--accent:#0f766e;--warm:#a16207;--danger:#b42318}
@@ -43,6 +45,11 @@ pre{margin:0;padding:14px;border-radius:16px;background:#152126;color:#d9f6f2;ov
         <div class="stats" id="usageStats"></div><div class="card" style="margin-top:12px;padding:12px;border-radius:16px"><h3>Pool Operations</h3><div class="hint">Apply fast traffic-management actions to the current route pool.</div><div class="grid2"><label>Canary Secondary<input id="poolCanarySecondaryInput" placeholder="codex/gpt-5.4"></label><label>Canary Split<input id="poolCanaryPercentInput" type="number" min="1" max="99" value="10"></label></div><div class="grid2"><label>Shift Provider<input id="poolShiftProviderInput" placeholder="openai"></label><label>Shift Percent<input id="poolShiftPercentInput" type="number" min="1" max="100" value="50"></label></div><div class="grid2"><label>Safe Apply<select id="poolSafeApplyInput"><option value="false">false</option><option value="true">true</option></select></label><label>Preview Token<input id="poolPreviewTokenInput" readonly placeholder="preview required when safe mode is on"></label></div><div class="actions"><button class="alt" id="poolPreviewCanaryBtn">Preview Canary</button><button class="alt" id="poolPreviewShiftBtn">Preview Shift</button><button class="alt" id="poolPreviewDrainBtn">Preview Drain</button><button class="alt" id="poolPreviewResumeBtn">Preview Resume</button><button class="alt" id="poolPreviewRebalanceBtn">Preview Rebalance</button><button class="alt" id="poolPreviewRestoreBtn">Preview Restore</button></div><div class="actions"><button class="alt" id="poolDrainBtn">Apply Drain</button><button class="alt" id="poolResumeBtn">Apply Resume</button><button class="warn" id="poolCanaryBtn">Apply Canary</button><button class="alt" id="poolRebalanceBtn">Apply Rebalance</button><button class="alt" id="poolRestoreBtn">Apply Restore</button><button class="warn" id="poolShiftProviderBtn">Apply Shift</button></div><pre id="poolPreviewOut">{}</pre></div><div class="card" style="margin-top:12px;padding:12px;border-radius:16px"><h3>Global Topology</h3><div class="hint">Legend: <span class="pill">medium activity</span> <span class="warn">high activity</span> <span class="hint">low activity</span></div><div class="hint" id="legendExplain">High activity means the node is receiving materially more recent hits in the selected window.</div><div id="globalTopologyOut" class="list"></div></div>
       </article>
       <article class="card">
+        <h2>Diagnostics</h2>
+        <div class="stats" id="healthStats"></div>
+        <div class="list" id="healthWarnings"></div>
+      </article>
+      <article class="card">
         <h2>Activity</h2>
         <pre id="logBox">Ready.</pre>
       </article><article class="card">
@@ -77,7 +84,7 @@ pre{margin:0;padding:14px;border-radius:16px;background:#152126;color:#d9f6f2;ov
           <label>Not Before<input id="notBefore" placeholder="RFC3339"></label>
           <label>Not After<input id="notAfter" placeholder="RFC3339"></label>
         </div><div class="grid3"><label>Pre-Check Mode<select id="stagePolicyPreCheck"><option value="first-match">first-match</option><option value="continue-all">continue-all</option></select></label><label>Rewrite Mode<select id="stagePolicyRewrite"><option value="first-match">first-match</option><option value="continue-all">continue-all</option></select></label><label>Route Mode<select id="stagePolicyRoute"><option value="first-match">first-match</option><option value="continue-all">continue-all</option></select></label></div><div class="grid2"><label>Mirror Mode<select id="stagePolicyMirror"><option value="continue-all">continue-all</option><option value="first-match">first-match</option></select></label><label>Post-Audit Mode<select id="stagePolicyPostAudit"><option value="continue-all">continue-all</option><option value="first-match">first-match</option></select></label></div>
-        <div class="actions"><button class="warn" id="addRouteToModelRuleBtn">Add Route Rule</button><button class="warn" id="addFallbackRuleBtn">Add Fallback Rule</button><button class="warn" id="addDenyRuleBtn">Add Deny Rule</button><button class="warn" id="buildFallbackChainBtn">Build Fallback Chain Rule</button></div><div class="card" style="padding:12px 0 0;border:0;box-shadow:none;background:none"><h3>Templates</h3><div class="grid2"><label>Template Search<input id="templateSearchInput" placeholder="name or description"></label><label>Template Category<select id="templateCategoryFilter"><option value="">all</option><option value="routing">routing</option><option value="fallback">fallback</option><option value="security">security</option><option value="custom">custom</option></select></label></div><div class="grid3"><label>Scenario<select id="templateScenarioFilter"><option value="">all</option><option value="model-migration">model-migration</option><option value="traffic-split">traffic-split</option><option value="cost-control">cost-control</option><option value="shadow-release">shadow-release</option><option value="provider-guardrail">provider-guardrail</option></select></label><label>Maturity<select id="templateMaturityFilter"><option value="">all</option><option value="stable">stable</option><option value="beta">beta</option><option value="experimental">experimental</option></select></label><label>Tag<input id="templateTagFilter" placeholder="routing"></label></div><div class="actions"><button id="saveTemplateBtn">Save Current Rule As Template</button><button class="alt" id="applyTemplateFilterBtn">Filter Templates</button><button class="alt" id="exportTemplatesBtn">Export Templates</button></div><label>Template Import JSON<textarea id="templateImportBox" placeholder="{"items":[...]}"></textarea></label><div class="actions"><button class="warn" id="importTemplatesBtn">Import Templates</button></div><div class="list" id="templateList"></div></div>
+        <div class="actions"><button class="warn" id="addRouteToModelRuleBtn">Add Route Rule</button><button class="warn" id="addFallbackRuleBtn">Add Fallback Rule</button><button class="warn" id="addDenyRuleBtn">Add Deny Rule</button><button class="warn" id="buildFallbackChainBtn">Build Fallback Chain Rule</button></div><div class="card" style="padding:12px 0 0;border:0;box-shadow:none;background:none"><h3>Templates</h3><div class="grid2"><label>Template Search<input id="templateSearchInput" placeholder="name or description"></label><label>Template Category<select id="templateCategoryFilter"><option value="">all</option><option value="routing">routing</option><option value="fallback">fallback</option><option value="security">security</option><option value="custom">custom</option></select></label></div><div class="grid3"><label>Scenario<select id="templateScenarioFilter"><option value="">all</option><option value="model-migration">model-migration</option><option value="traffic-split">traffic-split</option><option value="cost-control">cost-control</option><option value="shadow-release">shadow-release</option><option value="provider-guardrail">provider-guardrail</option></select></label><label>Maturity<select id="templateMaturityFilter"><option value="">all</option><option value="stable">stable</option><option value="beta">beta</option><option value="experimental">experimental</option></select></label><label>Tag<input id="templateTagFilter" placeholder="routing"></label></div><div class="actions"><button id="saveTemplateBtn">Save Current Rule As Template</button><button class="alt" id="applyTemplateFilterBtn">Filter Templates</button><button class="alt" id="exportTemplatesBtn">Export Templates</button></div><label>Template Import JSON<textarea id="templateImportBox" placeholder="{&quot;items&quot;:[...]}"></textarea></label><div class="actions"><button class="warn" id="importTemplatesBtn">Import Templates</button></div><div class="list" id="templateList"></div></div>
         <div class="rule-builder">
           <div class="grid4"><label>Rule ID<input id="ruleIdInput"></label><label>Stage<select id="ruleStageInput"><option value="pre-check">pre-check</option><option value="rewrite">rewrite</option><option value="route">route</option><option value="mirror">mirror</option><option value="post-audit">post-audit</option></select></label><label>Match Model<input id="ruleMatchModelInput" placeholder="gpt-5.5,gpt-5.4"></label><label>Priority<input id="rulePriorityInput" type="number" value="10"></label></div>
           <div class="grid3"><label>Match Path<input id="rulePathInput" placeholder="/v1/responses,/v1/chat/completions"></label><label>Match Provider<input id="ruleProviderInput" placeholder="openai,codex"></label><label>Match Header<input id="ruleHeaderInput" placeholder="X-Test:yes"></label></div>
@@ -94,8 +101,8 @@ pre{margin:0;padding:14px;border-radius:16px;background:#152126;color:#d9f6f2;ov
             </div>
             <div class="group-board">
               <div class="mini-card"><h4>Condition Groups</h4><div class="grid2"><label>Use Any-Of<select id="ruleUseAnyOf"><option value="false">false</option><option value="true">true</option></select></label><label>Use All-Of<select id="ruleUseAllOf"><option value="false">false</option><option value="true">true</option></select></label></div><div class="actions"><button class="alt" id="buildAnyOfBtn">Append Any-Of Group</button><button class="alt" id="buildAllOfBtn">Append All-Of Group</button><button class="alt" id="syncCurrentRuleToGroupsBtn">Sync Current Match</button></div><div class="actions"><button class="alt" id="loadFirstAnyOfBtn">Load First Any-Of</button><button class="alt" id="loadFirstAllOfBtn">Load First All-Of</button><button class="alt" id="popConditionGroupBtn">Remove Last Group</button><button class="alt" id="clearConditionGroupsBtn">Clear Groups</button></div><div id="conditionGroupsPreview" class="list"></div></div>
-              <label>Any-Of JSON<textarea id="ruleAnyOfInput" placeholder="[{"models":["gpt-5.5"]},{"paths":["/v1/responses"]}]"></textarea></label>
-              <label>All-Of JSON<textarea id="ruleAllOfInput" placeholder="[{"query":{"mode":"strict"}},{"body_contains":{"service_tier":"priority"}}]"></textarea></label>
+              <label>Any-Of JSON<textarea id="ruleAnyOfInput" placeholder="[{&quot;models&quot;:[&quot;gpt-5.5&quot;]},{&quot;paths&quot;:[&quot;/v1/responses&quot;]}]"></textarea></label>
+              <label>All-Of JSON<textarea id="ruleAllOfInput" placeholder="[{&quot;query&quot;:{&quot;mode&quot;:&quot;strict&quot;}},{&quot;body_contains&quot;:{&quot;service_tier&quot;:&quot;priority&quot;}}]"></textarea></label>
             </div>
           </div>
           <div class="actions"><button class="warn" id="pushRuleFromFormBtn">Append Rule From Form</button><button id="saveRuleBtn">Save Rule</button><button id="cloneRuleBtn">Clone Rule</button><button class="danger" id="deleteRuleBtn">Delete Rule</button></div><div class="actions"><button class="alt" id="moveRuleUpBtn">Move Rule Up</button><button class="alt" id="moveRuleDownBtn">Move Rule Down</button></div><div class="list" id="rulesList"></div><label>Rules JSON<textarea id="rulesBox"></textarea></label>
@@ -147,6 +154,7 @@ pre{margin:0;padding:14px;border-radius:16px;background:#152126;color:#d9f6f2;ov
 <script nonce="gateway-ui">
 const api = {
   keys: '/v0/management/plugins/gateway/keys',
+  health: '/v0/management/plugins/gateway/health',
   policies: '/v0/management/plugins/gateway/policies',
   exportPolicies: '/v0/management/plugins/gateway/policies/export',
   importPolicies: '/v0/management/plugins/gateway/policies/import',
@@ -166,21 +174,123 @@ const api = {
   routeMemberPreview: '/v0/management/plugins/gateway/route-members/preview',
   dryRun: '/v0/management/plugins/gateway/dry-run'
 };
+const gatewayTokenParam = new URLSearchParams(window.location.search).get('gateway_token') || '';
+function apiURL(url){
+  if(!gatewayTokenParam) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'gateway_token=' + encodeURIComponent(gatewayTokenParam);
+}
+const rawInnerHTMLDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+function sanitizeHTML(raw){
+  const template = document.createElement('template');
+  rawInnerHTMLDescriptor.set.call(template, String(raw ?? ''));
+  template.content.querySelectorAll('script,iframe,object,embed,link,meta,style,svg,math,form').forEach(node => node.remove());
+  template.content.querySelectorAll('*').forEach(node => {
+    Array.from(node.attributes).forEach(attribute => {
+      const name = attribute.name.toLowerCase();
+      const value = String(attribute.value || '').trim().toLowerCase();
+      if(name.startsWith('on') || name === 'style' || ((name === 'href' || name === 'src' || name === 'srcdoc' || name === 'xlink:href') && value.startsWith('javascript:'))){
+        node.removeAttribute(attribute.name);
+      }
+    });
+  });
+  return rawInnerHTMLDescriptor.get.call(template);
+}
+Object.defineProperty(Element.prototype, 'innerHTML', {
+  get(){ return rawInnerHTMLDescriptor.get.call(this); },
+  set(value){ rawInnerHTMLDescriptor.set.call(this, sanitizeHTML(value)); }
+});
 const el = id => document.getElementById(id);
+function clearNode(node){ if(node) node.replaceChildren(); }
+function textNode(tag, className, text){
+  const node = document.createElement(tag);
+  if(className) node.className = className;
+  node.textContent = String(text ?? '');
+  return node;
+}
+function appendText(parent, tag, className, text){
+  const node = textNode(tag, className, text);
+  parent.appendChild(node);
+  return node;
+}
+function appendButton(parent, className, text, onClick){
+  const button = document.createElement('button');
+  if(className) button.className = className;
+  button.type = 'button';
+  button.textContent = text;
+  if(onClick) button.addEventListener('click', onClick);
+  parent.appendChild(button);
+  return button;
+}
+function emptyNode(className, text){ return textNode('div', className, text); }
+function appendStat(parent, label, value){
+  const node = document.createElement('div');
+  node.className = 'stat';
+  appendText(node, 'span', '', label);
+  appendText(node, 'b', '', value);
+  parent.appendChild(node);
+  return node;
+}
+function appendPreviewChip(parent, type, label, active){
+  const chip = textNode('span', 'chip', label);
+  chip.dataset.previewFocus = type;
+  chip.dataset.previewLabel = label;
+  if(active){
+    chip.style.outline = '2px solid #a16207';
+    chip.style.outlineOffset = '2px';
+  }
+  parent.appendChild(chip);
+  return chip;
+}
+function appendNodeDetail(parent, title, lines){
+  const detail = document.createElement('div');
+  detail.className = 'node-detail';
+  appendText(detail, 'b', '', title);
+  (lines || []).forEach(line => appendText(detail, 'span', '', line));
+  parent.appendChild(detail);
+  return detail;
+}
+function appendSubnodeList(parent, type, items, options){
+  const list = Array.isArray(items) ? items : [];
+  const emptyText = options?.emptyText || '';
+  if(!list.length){
+    if(emptyText) appendText(parent, 'div', 'hint', emptyText);
+    return null;
+  }
+  const out = document.createElement('div');
+  out.className = 'subnode-list';
+  list.forEach((item, index) => {
+    const label = previewChipLabel(type, item);
+    const node = document.createElement('div');
+    node.className = 'subnode ' + (options?.kind || '') + (previewMatches(type, label) ? ' focused' : '');
+    node.dataset.previewFocus = type;
+    node.dataset.previewLabel = label;
+    const body = document.createElement('div');
+    appendText(body, 'strong', '', label);
+    const summary = options?.summary ? options.summary(item, index) : '';
+    if(summary) appendText(body, 'span', 'hint', summary);
+    node.appendChild(body);
+    appendText(node, 'div', 'hint', options?.meta ? options.meta(item, index) : '');
+    out.appendChild(node);
+  });
+  parent.appendChild(out);
+  return out;
+}
 const safeApplyInput = el('poolSafeApplyInput');
 if(safeApplyInput){ safeApplyInput.value = 'true'; safeApplyInput.disabled = true; }
 const initialURLState = readURLState();
-let state = { keys: [], usage: [], audit: [], auditSummary: { total_by_decision: {}, total_by_reason: {}, total_by_rule: {}, total_by_policy: {}, total_by_model: {} }, templates: [], policies: { key_policies: [], default_policy: {} }, selectedKeyId: initialURLState.keyId || '', selectedRuleId: initialURLState.ruleId || '', focusedPreviewLabel: initialURLState.previewLabel || '', focusedPreviewType: initialURLState.previewType || '', latestPoolPreviewToken: '', weightedRoutes: [], failoverHops: [], memberHitCounts: {}, ruleHitCounts: {}, stageHitCounts: {}, memberHitCountsLast5m: {}, ruleHitCountsLast5m: {}, stageHitCountsLast5m: {}, memberHitCountsLastHour: {}, ruleHitCountsLastHour: {}, stageHitCountsLastHour: {}, memberHitCountsLast24h: {}, ruleHitCountsLast24h: {}, stageHitCountsLast24h: {}, statsWindow: initialURLState.statsWindow || '1h', collapsedTopology: Object.keys(initialURLState.collapsedTopology || {}).length ? initialURLState.collapsedTopology : loadCollapsedTopology() };
+let state = { keys: [], usage: [], health: {}, audit: [], auditSummary: { total_by_decision: {}, total_by_reason: {}, total_by_rule: {}, total_by_policy: {}, total_by_model: {} }, templates: [], policies: { key_policies: [], default_policy: {} }, selectedKeyId: initialURLState.keyId || '', selectedRuleId: initialURLState.ruleId || '', focusedPreviewLabel: initialURLState.previewLabel || '', focusedPreviewType: initialURLState.previewType || '', latestPoolPreviewToken: '', weightedRoutes: [], failoverHops: [], memberHitCounts: {}, ruleHitCounts: {}, stageHitCounts: {}, memberHitCountsLast5m: {}, ruleHitCountsLast5m: {}, stageHitCountsLast5m: {}, memberHitCountsLastHour: {}, ruleHitCountsLastHour: {}, stageHitCountsLastHour: {}, memberHitCountsLast24h: {}, ruleHitCountsLast24h: {}, stageHitCountsLast24h: {}, statsWindow: initialURLState.statsWindow || '1h', collapsedTopology: Object.keys(initialURLState.collapsedTopology || {}).length ? initialURLState.collapsedTopology : loadCollapsedTopology() };
 function log(msg, kind='ok'){ el('logBox').textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg; el('logBox').style.color = kind === 'bad' ? '#ffb4ab' : '#9ff3e8'; }
-async function readJSON(url, init){ const res = await fetch(url, init); const body = await res.json(); if(!res.ok) throw new Error(body.error || body.message || JSON.stringify(body)); return body; }
+async function readJSON(url, init){ const res = await fetch(apiURL(url), init); const body = await res.json(); if(!res.ok) throw new Error(body.error || body.message || JSON.stringify(body)); return body; }
 function selectedPolicy(){ return (state.policies.key_policies || []).find(item => item.key_id === state.selectedKeyId) || null; }
 function renderKeys(){
-  const root = el('keysList'); root.innerHTML='';
+  const root = el('keysList'); clearNode(root);
   const items = state.keys || [];
-  if(!items.length){ root.innerHTML = '<div class="item">No key-specific policies yet.</div>'; return; }
+  if(!items.length){ root.appendChild(emptyNode('item', 'No key-specific policies yet.')); return; }
   items.forEach(key => {
     const node = document.createElement('div'); node.className='item' + (state.selectedKeyId === key.key_id ? ' active' : '');
-    node.innerHTML = '<strong>' + (key.display_name || key.key_id) + '</strong><span class="pill">' + (key.masked_key || '') + '</span><div class="hint">key_id: ' + key.key_id + ' | enabled: ' + key.enabled + '</div>';
+    appendText(node, 'strong', '', key.display_name || key.key_id);
+    appendText(node, 'span', 'pill', key.masked_key || '');
+    appendText(node, 'div', 'hint', 'key_id: ' + key.key_id + ' | enabled: ' + key.enabled);
     node.addEventListener('click', () => { state.selectedKeyId = key.key_id; state.selectedRuleId = ''; syncURLState(); hydrateSelectedPolicy(); renderKeys(); renderRules(); });
     root.appendChild(node);
   });
@@ -202,20 +312,6 @@ function previewChipLabel(type, item){
 function previewMatches(type, label){ return state.focusedPreviewType === (type || '') && state.focusedPreviewLabel === (label || ''); }
 function setPreviewFocus(type, label){ state.focusedPreviewType = type || ''; state.focusedPreviewLabel = label || ''; syncURLState(); }
 function clearPreviewFocus(){ state.focusedPreviewType = ''; state.focusedPreviewLabel = ''; syncURLState(); }
-function renderSubnodeList(type, items, options){
-  const list = Array.isArray(items) ? items : [];
-  const emptyText = options?.emptyText || 'No items.';
-  if(!list.length){
-    return emptyText ? '<div class="hint">' + emptyText + '</div>' : '';
-  }
-  return '<div class="subnode-list">' + list.map((item, index) => {
-    const label = previewChipLabel(type, item);
-    const focused = previewMatches(type, label) ? ' focused' : '';
-    const summary = options?.summary ? options.summary(item, index) : '';
-    const meta = options?.meta ? options.meta(item, index) : '';
-    return '<div class="subnode ' + (options?.kind || '') + focused + '" data-preview-focus="' + type + '" data-preview-label="' + label.replace(/"/g, '&quot;') + '"><div><strong>' + label + '</strong>' + (summary ? '<span class="hint">' + summary + '</span>' : '') + '</div><div class="hint">' + (meta || '') + '</div></div>';
-  }).join('') + '</div>';
-}
 function bindPreviewFocus(scope, policy, rule){
   if(!scope) return;
   scope.querySelectorAll('[data-preview-focus]').forEach(node => {
@@ -282,8 +378,8 @@ function applyDryRunPayloadFromRule(policy, rule){
 function renderDryRunHints(payload){
   const root = el('dryRunHintStats');
   if(!root) return;
-  root.innerHTML = '';
-  if(!payload || typeof payload !== 'object'){ root.innerHTML = '<div class="stat"><span>No dry-run hints yet.</span><b>0</b></div>'; return; }
+  clearNode(root);
+  if(!payload || typeof payload !== 'object'){ appendStat(root, 'No dry-run hints yet.', '0'); return; }
   [
     ['provider_hint', payload.provider_hint],
     ['route_hint', payload.route_hint],
@@ -295,20 +391,17 @@ function renderDryRunHints(payload){
     ['mirror_hint', payload.mirror_models_hint && payload.mirror_models_hint.length ? payload.mirror_models_hint.join(', ') : '']
   ].forEach(([label, value]) => {
     if(!value) return;
-    const node = document.createElement('div');
-    node.className = 'stat';
-    node.innerHTML = '<span>' + label + '</span><b>' + value + '</b>';
-    root.appendChild(node);
+    appendStat(root, label, value);
   });
-  if(!root.innerHTML){ root.innerHTML = '<div class="stat"><span>No dry-run hints yet.</span><b>0</b></div>'; }
+  if(!root.childElementCount){ appendStat(root, 'No dry-run hints yet.', '0'); }
 }
 
 function renderDryRunDecision(result){
   const root = el('dryRunDecisionStats');
   if(!root) return;
-  root.innerHTML = '';
+  clearNode(root);
   if(!result || typeof result !== 'object'){
-    root.innerHTML = '<div class="stat"><span>No dry-run decision yet.</span><b>0</b></div>';
+    appendStat(root, 'No dry-run decision yet.', '0');
     return;
   }
   [
@@ -317,20 +410,17 @@ function renderDryRunDecision(result){
     ['final_model', result.final_model || '-'],
     ['rule_id', result.rule_id || '-']
   ].forEach(([label, value]) => {
-    const node = document.createElement('div');
-    node.className = 'stat';
-    node.innerHTML = '<span>' + label + '</span><b>' + value + '</b>';
-    root.appendChild(node);
+    appendStat(root, label, value);
   });
 }
 
 function renderDryRunStageTrace(items){
   const root = el('dryRunStageTrace');
   if(!root) return;
-  root.innerHTML = '';
+  clearNode(root);
   const rows = Array.isArray(items) ? items : [];
   if(!rows.length){
-    root.innerHTML = '<div class="stat"><span>No stage trace yet.</span><b>0</b></div>';
+    appendStat(root, 'No stage trace yet.', '0');
     return;
   }
   rows.forEach((item, index) => {
@@ -339,15 +429,16 @@ function renderDryRunStageTrace(items){
     const failoverReasons = Array.isArray(item.failover_reasons) && item.failover_reasons.length ? item.failover_reasons.join(', ') : '-';
     const mirrors = Array.isArray(item.mirror_models) && item.mirror_models.length ? item.mirror_models.join(', ') : '-';
     const failoverChain = Array.isArray(item.failover_chain) && item.failover_chain.length ? item.failover_chain.join(' -> ') : '-';
-    node.innerHTML = '<strong>' + (index + 1) + '. ' + (item.stage || '-') + '</strong>' +
-      '<div class="hint">mode ' + (item.mode || '-') + ' | matched ' + (item.matched_count ?? (item.matched_rules || []).length || 0) + ' | decision ' + (item.decision || 'pass') + '</div>' +
-      '<div class="hint">rules ' + (((item.matched_rules || []).length ? item.matched_rules.join(', ') : '-')) + '</div>' +
-      '<div class="hint">final model ' + (item.final_model || '-') + ' | route target ' + (item.route_target || '-') + '</div>' +
-      '<div class="hint">route pool ' + (item.route_pool || '-') + ' | fallback target ' + (item.fallback_target || '-') + '</div>' +
-      '<div class="hint">mirrors ' + mirrors + '</div>' +
-      '<div class="hint">failover chain ' + failoverChain + '</div>' +
-      '<div class="hint">failover reasons ' + failoverReasons + '</div>' +
-      '<div class="hint">reason ' + (item.reason || '-') + '</div>';
+    const matchedCount = item.matched_count ?? ((item.matched_rules || []).length || 0);
+    appendText(node, 'strong', '', (index + 1) + '. ' + (item.stage || '-'));
+    appendText(node, 'div', 'hint', 'mode ' + (item.mode || '-') + ' | matched ' + matchedCount + ' | decision ' + (item.decision || 'pass'));
+    appendText(node, 'div', 'hint', 'rules ' + (((item.matched_rules || []).length ? item.matched_rules.join(', ') : '-')));
+    appendText(node, 'div', 'hint', 'final model ' + (item.final_model || '-') + ' | route target ' + (item.route_target || '-'));
+    appendText(node, 'div', 'hint', 'route pool ' + (item.route_pool || '-') + ' | fallback target ' + (item.fallback_target || '-'));
+    appendText(node, 'div', 'hint', 'mirrors ' + mirrors);
+    appendText(node, 'div', 'hint', 'failover chain ' + failoverChain);
+    appendText(node, 'div', 'hint', 'failover reasons ' + failoverReasons);
+    appendText(node, 'div', 'hint', 'reason ' + (item.reason || '-'));
     root.appendChild(node);
   });
 }
@@ -355,52 +446,78 @@ function renderDryRunStageTrace(items){
 function renderCurrentNodeDetail(){
   const root = el('currentNodeDetail');
   if(!root) return;
-  root.innerHTML = '';
+  clearNode(root);
   const policy = selectedPolicy();
   const rule = (policy?.rules || []).find(item => item.id === state.selectedRuleId);
-  if(!policy){ root.innerHTML = '<div class="item">No policy selected.</div>'; return; }
+  if(!policy){ root.appendChild(emptyNode('item', 'No policy selected.')); return; }
   const windowHits = currentWindowHitMaps();
   const policyCard = document.createElement('div');
   policyCard.className = 'item';
-  policyCard.innerHTML = '<strong>Policy</strong><div class="hint">' + (policy.display_name || policy.key_id) + '</div><div class="hint">enabled ' + (policy.enabled !== false) + ' | rules ' + ((policy.rules || []).length) + ' | window ' + windowHits.label + '</div>';
+  appendText(policyCard, 'strong', '', 'Policy');
+  appendText(policyCard, 'div', 'hint', policy.display_name || policy.key_id);
+  appendText(policyCard, 'div', 'hint', 'enabled ' + (policy.enabled !== false) + ' | rules ' + ((policy.rules || []).length) + ' | window ' + windowHits.label);
   root.appendChild(policyCard);
   const governanceCard = document.createElement('div');
   governanceCard.className = 'item';
-  governanceCard.innerHTML = '<strong>Governance</strong><div class="hint">requests/day ' + (policy.limits?.requests_per_day || 0) + ' | requests/min ' + (policy.limits?.requests_per_minute || 0) + ' | inflight ' + (policy.limits?.max_inflight || 0) + '</div><div class="hint">pre-check ' + (policy.stage_policy?.['pre-check']?.mode || 'first-match') + ' | route ' + (policy.stage_policy?.route?.mode || 'first-match') + ' | mirror ' + (policy.stage_policy?.mirror?.mode || 'continue-all') + '</div>';
+  appendText(governanceCard, 'strong', '', 'Governance');
+  appendText(governanceCard, 'div', 'hint', 'requests/day ' + (policy.limits?.requests_per_day || 0) + ' | requests/min ' + (policy.limits?.requests_per_minute || 0) + ' | inflight ' + (policy.limits?.max_inflight || 0));
+  appendText(governanceCard, 'div', 'hint', 'pre-check ' + (policy.stage_policy?.['pre-check']?.mode || 'first-match') + ' | route ' + (policy.stage_policy?.route?.mode || 'first-match') + ' | mirror ' + (policy.stage_policy?.mirror?.mode || 'continue-all'));
   root.appendChild(governanceCard);
   const quickCard = document.createElement('div');
   quickCard.className = 'item';
-  quickCard.innerHTML = '<strong>Quick Actions</strong><div class="actions"><button class="alt" id="focusPolicyBtn">Focus Policy</button><button class="alt" id="focusRuleBtn">Focus Rule</button><button class="alt" id="openDryRunBtn">Open Dry-Run</button><button class="alt" id="resetDryRunBtn">Reset Dry-Run</button></div><div class="actions"><button class="alt" id="copyDryRunRequestBtn">Copy Request</button><button class="alt" id="copyRuleSummaryBtn">Copy Summary</button><button class="alt" id="copyRuleIdBtn">Copy Rule ID</button><button class="alt" id="copyRoutePoolBtn">Copy Pool</button><button class="alt" id="copyFailoverChainBtn">Copy Failover</button></div>';
+  appendText(quickCard, 'strong', '', 'Quick Actions');
+  const quickRow1 = document.createElement('div');
+  quickRow1.className = 'actions';
+  const focusPolicyBtn = appendButton(quickRow1, 'alt', 'Focus Policy', () => { renderKeys(); renderRules(); renderRouteGraph(); log('Focused current policy in topology.'); });
+  focusPolicyBtn.id = 'focusPolicyBtn';
+  const focusRuleBtn = appendButton(quickRow1, 'alt', 'Focus Rule', () => { if(rule){ hydrateRule(rule); renderRules(); renderRouteGraph(); log('Focused current rule.'); } });
+  focusRuleBtn.id = 'focusRuleBtn';
+  const openDryRunBtn = appendButton(quickRow1, 'alt', 'Open Dry-Run', () => {
+    el('dryKey').value = policy.match_api_key || '';
+    if(rule?.match?.models?.[0]) el('dryModel').value = rule.match.models[0];
+    if(rule?.match?.paths?.[0]) el('dryPath').value = rule.match.paths[0];
+    applyDryRunPayloadFromRule(policy, rule);
+    log('Prepared dry-run form from current node.');
+  });
+  openDryRunBtn.id = 'openDryRunBtn';
+  appendButton(quickRow1, 'alt', 'Reset Dry-Run').id = 'resetDryRunBtn';
+  quickCard.appendChild(quickRow1);
+  const quickRow2 = document.createElement('div');
+  quickRow2.className = 'actions';
+  appendButton(quickRow2, 'alt', 'Copy Request').id = 'copyDryRunRequestBtn';
+  appendButton(quickRow2, 'alt', 'Copy Summary').id = 'copyRuleSummaryBtn';
+  appendButton(quickRow2, 'alt', 'Copy Rule ID').id = 'copyRuleIdBtn';
+  appendButton(quickRow2, 'alt', 'Copy Pool').id = 'copyRoutePoolBtn';
+  appendButton(quickRow2, 'alt', 'Copy Failover').id = 'copyFailoverChainBtn';
+  quickCard.appendChild(quickRow2);
   root.appendChild(quickCard);
-  setTimeout(() => {
-    const focusPolicyBtn = el('focusPolicyBtn');
-    if(focusPolicyBtn) focusPolicyBtn.onclick = () => { renderKeys(); renderRules(); renderRouteGraph(); log('Focused current policy in topology.'); };
-    const focusRuleBtn = el('focusRuleBtn');
-    if(focusRuleBtn) focusRuleBtn.onclick = () => { if(rule){ hydrateRule(rule); renderRules(); renderRouteGraph(); log('Focused current rule.'); } };
-    const openDryRunBtn = el('openDryRunBtn');
-    if(openDryRunBtn) openDryRunBtn.onclick = () => {
-      el('dryKey').value = policy.match_api_key || '';
-      if(rule?.match?.models?.[0]) el('dryModel').value = rule.match.models[0];
-      if(rule?.match?.paths?.[0]) el('dryPath').value = rule.match.paths[0];
-      applyDryRunPayloadFromRule(policy, rule);
-      log('Prepared dry-run form from current node.');
-    };
-  }, 0);
   if(rule){
     const ruleCard = document.createElement('div');
     ruleCard.className = 'item';
-    ruleCard.innerHTML = '<strong>Rule</strong><div class="hint">' + (rule.id || '-') + ' | stage ' + (rule.stage || 'pre-check') + '</div><div class="hint">priority ' + (rule.priority || 0) + ' | total hits ' + (state.ruleHitCounts[rule.id || ''] || 0) + ' | current window ' + (windowHits.rule[rule.id || ''] || 0) + '</div>';
+    appendText(ruleCard, 'strong', '', 'Rule');
+    appendText(ruleCard, 'div', 'hint', (rule.id || '-') + ' | stage ' + (rule.stage || 'pre-check'));
+    appendText(ruleCard, 'div', 'hint', 'priority ' + (rule.priority || 0) + ' | total hits ' + (state.ruleHitCounts[rule.id || ''] || 0) + ' | current window ' + (windowHits.rule[rule.id || ''] || 0));
     root.appendChild(ruleCard);
     const actionCard = document.createElement('div');
     actionCard.className = 'item';
-    actionCard.innerHTML = '<strong>Route</strong><div class="hint">pool ' + (rule.actions?.route_pool?.name || '-') + ' | route_to ' + (rule.actions?.route_to_model || '-') + '</div><div class="hint">failover hops ' + ((rule.actions?.failover_hops || []).length) + ' | mirrors ' + ((rule.actions?.mirror_models || []).length) + '</div>';
+    appendText(actionCard, 'strong', '', 'Route');
+    appendText(actionCard, 'div', 'hint', 'pool ' + (rule.actions?.route_pool?.name || '-') + ' | route_to ' + (rule.actions?.route_to_model || '-'));
+    appendText(actionCard, 'div', 'hint', 'failover hops ' + ((rule.actions?.failover_hops || []).length) + ' | mirrors ' + ((rule.actions?.mirror_models || []).length));
     root.appendChild(actionCard);
     const poolMembers = rule.actions?.route_pool?.members || rule.actions?.weighted_routes || [];
     if(poolMembers.length){
       const poolCard = document.createElement('div');
       poolCard.className = 'item';
-      const previewItems = poolMembers.slice(0, 3).map(member => { const label = previewChipLabel('pool-member', member); const active = previewMatches('pool-member', label) ? ' style="outline:2px solid #a16207;outline-offset:2px"' : ''; return '<span class="chip"' + active + ' data-preview-focus="pool-member" data-preview-label="' + label.replace(/"/g, '&quot;') + '">' + label + '</span>'; }).join(' ');
-      poolCard.innerHTML = '<strong>Pool Members</strong><div class="chips">' + previewItems + (poolMembers.length > 3 ? '<span class="chip">...</span>' : '') + '</div><div class="hint">Click a member chip to refocus the topology route branch for the selected rule.</div>';
+      appendText(poolCard, 'strong', '', 'Pool Members');
+      const chips = document.createElement('div');
+      chips.className = 'chips';
+      poolMembers.slice(0, 3).forEach(member => {
+        const label = previewChipLabel('pool-member', member);
+        appendPreviewChip(chips, 'pool-member', label, previewMatches('pool-member', label));
+      });
+      if(poolMembers.length > 3) appendText(chips, 'span', 'chip', '...');
+      poolCard.appendChild(chips);
+      appendText(poolCard, 'div', 'hint', 'Click a member chip to refocus the topology route branch for the selected rule.');
       poolCard.title = 'Use the route branch in topology to inspect pool members for the selected rule.';
       bindPreviewFocus(poolCard, policy, rule);
       root.appendChild(poolCard);
@@ -408,8 +525,16 @@ function renderCurrentNodeDetail(){
     if((rule.actions?.failover_hops || []).length){
       const hopCard = document.createElement('div');
       hopCard.className = 'item';
-      const previewItems = (rule.actions.failover_hops || []).slice(0, 3).map(hop => { const label = previewChipLabel('failover-hop', hop); const active = previewMatches('failover-hop', label) ? ' style="outline:2px solid #a16207;outline-offset:2px"' : ''; return '<span class="chip"' + active + ' data-preview-focus="failover-hop" data-preview-label="' + label.replace(/"/g, '&quot;') + '">' + label + '</span>'; }).join(' ');
-      hopCard.innerHTML = '<strong>Failover Hops</strong><div class="chips">' + previewItems + ((rule.actions.failover_hops || []).length > 3 ? '<span class="chip">...</span>' : '') + '</div><div class="hint">Click a hop chip to localize the exact failover target in topology order.</div>';
+      appendText(hopCard, 'strong', '', 'Failover Hops');
+      const chips = document.createElement('div');
+      chips.className = 'chips';
+      (rule.actions.failover_hops || []).slice(0, 3).forEach(hop => {
+        const label = previewChipLabel('failover-hop', hop);
+        appendPreviewChip(chips, 'failover-hop', label, previewMatches('failover-hop', label));
+      });
+      if((rule.actions.failover_hops || []).length > 3) appendText(chips, 'span', 'chip', '...');
+      hopCard.appendChild(chips);
+      appendText(hopCard, 'div', 'hint', 'Click a hop chip to localize the exact failover target in topology order.');
       hopCard.title = 'Use the failover branch in topology to inspect hop order for the selected rule.';
       bindPreviewFocus(hopCard, policy, rule);
       root.appendChild(hopCard);
@@ -417,15 +542,24 @@ function renderCurrentNodeDetail(){
     if((rule.actions?.mirror_models || []).length){
       const mirrorCard = document.createElement('div');
       mirrorCard.className = 'item';
-      const previewItems = (rule.actions.mirror_models || []).slice(0, 4).map(model => { const label = previewChipLabel('mirror-target', { model }); const active = previewMatches('mirror-target', label) ? ' style="outline:2px solid #a16207;outline-offset:2px"' : ''; return '<span class="chip"' + active + ' data-preview-focus="mirror-target" data-preview-label="' + label.replace(/"/g, '&quot;') + '">' + label + '</span>'; }).join(' ');
-      mirrorCard.innerHTML = '<strong>Mirror Targets</strong><div class="chips">' + previewItems + ((rule.actions.mirror_models || []).length > 4 ? '<span class="chip">...</span>' : '') + '</div><div class="hint">Mirror targets are shown as shadow traffic branches in topology.</div>';
+      appendText(mirrorCard, 'strong', '', 'Mirror Targets');
+      const chips = document.createElement('div');
+      chips.className = 'chips';
+      (rule.actions.mirror_models || []).slice(0, 4).forEach(model => {
+        const label = previewChipLabel('mirror-target', { model });
+        appendPreviewChip(chips, 'mirror-target', label, previewMatches('mirror-target', label));
+      });
+      if((rule.actions.mirror_models || []).length > 4) appendText(chips, 'span', 'chip', '...');
+      mirrorCard.appendChild(chips);
+      appendText(mirrorCard, 'div', 'hint', 'Mirror targets are shown as shadow traffic branches in topology.');
       bindPreviewFocus(mirrorCard, policy, rule);
       root.appendChild(mirrorCard);
     }
   } else {
     const info = document.createElement('div');
     info.className = 'item';
-    info.innerHTML = '<strong>Rule</strong><div class="hint">No rule selected in this policy.</div>';
+    appendText(info, 'strong', '', 'Rule');
+    appendText(info, 'div', 'hint', 'No rule selected in this policy.');
     root.appendChild(info);
   }
 }
@@ -453,65 +587,106 @@ function renderStatsWindowButtons(){
 }
 
 function renderUsage(){
-  const root = el('usageStats'); root.innerHTML='';
+  const root = el('usageStats'); clearNode(root);
   const rows = state.usage || [];
   const windowHits = currentWindowHitMaps();
   renderStatsWindowButtons();
   renderContextBreadcrumb();
   renderCurrentNodeDetail();
-  if(!rows.length){ root.innerHTML = '<div class="stat"><span>No usage data yet.</span><b>0</b></div>'; renderGlobalTopology(); return; }
+  if(!rows.length){ appendStat(root, 'No usage data yet.', '0'); renderGlobalTopology(); return; }
   rows.forEach(row => {
     const node = document.createElement('div'); node.className='stat';
-    node.innerHTML = '<span>' + (row.display_name || row.key_id) + '</span><b>' + row.requests_today + '</b><div class="hint">minute ' + row.requests_minute + ' | inflight ' + row.inflight + ' | window ' + windowHits.label + '</div>';
+    appendText(node, 'span', '', row.display_name || row.key_id);
+    appendText(node, 'b', '', row.requests_today);
+    appendText(node, 'div', 'hint', 'minute ' + row.requests_minute + ' | inflight ' + row.inflight + ' | window ' + windowHits.label);
     root.appendChild(node);
   });
   renderGlobalTopology();
 }
+function renderHealth(){
+  const root = el('healthStats');
+  const warningsRoot = el('healthWarnings');
+  clearNode(root);
+  clearNode(warningsRoot);
+  if(!root || !warningsRoot) return;
+  const health = state.health || {};
+  const counters = health.counters || {};
+  const persistence = health.persistence || {};
+  const security = health.security || {};
+  const counts = health.counts || {};
+  appendStat(root, 'Status', health.status || 'unknown');
+  appendStat(root, 'Counters', counters.backend || 'local');
+  appendStat(root, 'Redis', counters.redis_status || 'not_configured');
+  appendStat(root, 'Failure Mode', counters.failure_mode || '-');
+  appendStat(root, 'Redis Required', String(Boolean(counters.redis_required)));
+  appendStat(root, 'Persistence', persistence.storage || 'memory');
+  appendStat(root, 'Security', security.management_auth_enabled ? 'management tokens' : (security.ui_auth_enabled ? 'ui token only' : 'host-only'));
+  appendStat(root, 'Policies', counts.key_policies || 0);
+  const warnings = Array.isArray(health.warnings) ? health.warnings : [];
+  if(!warnings.length){
+    warningsRoot.appendChild(emptyNode('item', 'No diagnostics warnings.'));
+    return;
+  }
+  warnings.forEach(warning => warningsRoot.appendChild(emptyNode('item', warning)));
+}
 function renderAudit(){
-  const root = el('auditList'); root.innerHTML='';
+  const root = el('auditList'); clearNode(root);
   const rows = state.audit || [];
-  if(!rows.length){ root.innerHTML = '<div class="item">No audit records yet.</div>'; return; }
+  if(!rows.length){ root.appendChild(emptyNode('item', 'No audit records yet.')); return; }
   rows.forEach(row => {
     const node = document.createElement('div'); node.className='item';
-    node.innerHTML = '<strong>' + (row.decision || 'pass') + '</strong><div class="hint">' + (row.rule_id || '-') + ' | ' + (row.reason || '-') + '</div><div class="hint">' + (row.requested_model || '-') + ' -> ' + (row.final_model || '-') + '</div><div class="hint">event ' + (row.event_type || 'request') + ' | operator ' + (row.operator_action || '-') + ' | member ' + (row.target_member || '-') + '</div><div class="hint">before ' + (row.before_state || '-') + '</div><div class="hint">after ' + (row.after_state || '-') + '</div>';
-    node.addEventListener('click', async () => { try { const detail = await readJSON(api.auditDetail + '?time=' + encodeURIComponent(row.time || '') + '&rule=' + encodeURIComponent(row.rule_id || '') + '&reason=' + encodeURIComponent(row.reason || '')); el('auditDetailOut').textContent = JSON.stringify(detail, null, 2); const stats = el('auditDetailStats'); stats.innerHTML = ''; ['decision','rule_id','reason','requested_model','final_model','event_type','operator_action','target_member','secondary','before_state','after_state'].forEach(key => { const value = detail[key]; if(!value) return; const nodeStat = document.createElement('div'); nodeStat.className='stat'; nodeStat.innerHTML = '<span>' + key + '</span><b>' + value + '</b>'; stats.appendChild(nodeStat); }); if(Array.isArray(detail.diff) && detail.diff.length){ const diffNode = document.createElement('div'); diffNode.className='stat'; diffNode.innerHTML = '<span>diff</span><b>' + detail.diff.length + ' changes</b>'; stats.appendChild(diffNode); } log('Audit detail loaded.'); } catch(err){ log(err.message, 'bad'); } });
+    appendText(node, 'strong', '', row.decision || 'pass');
+    appendText(node, 'div', 'hint', (row.rule_id || '-') + ' | ' + (row.reason || '-'));
+    appendText(node, 'div', 'hint', (row.requested_model || '-') + ' -> ' + (row.final_model || '-'));
+    appendText(node, 'div', 'hint', 'event ' + (row.event_type || 'request') + ' | operator ' + (row.operator_action || '-') + ' | member ' + (row.target_member || '-'));
+    appendText(node, 'div', 'hint', 'before ' + (row.before_state || '-'));
+    appendText(node, 'div', 'hint', 'after ' + (row.after_state || '-'));
+    node.addEventListener('click', async () => {
+      try {
+        const detail = await readJSON(api.auditDetail + '?time=' + encodeURIComponent(row.time || '') + '&rule=' + encodeURIComponent(row.rule_id || '') + '&reason=' + encodeURIComponent(row.reason || ''));
+        el('auditDetailOut').textContent = JSON.stringify(detail, null, 2);
+        const stats = el('auditDetailStats');
+        clearNode(stats);
+        ['decision','rule_id','reason','requested_model','final_model','event_type','operator_action','target_member','secondary','before_state','after_state'].forEach(key => {
+          const value = detail[key];
+          if(!value) return;
+          appendStat(stats, key, value);
+        });
+        if(Array.isArray(detail.diff) && detail.diff.length){
+          appendStat(stats, 'diff', detail.diff.length + ' changes');
+        }
+        log('Audit detail loaded.');
+      } catch(err){ log(err.message, 'bad'); }
+    });
     root.appendChild(node);
   });
 }
 function renderAuditSummary(){
-  const root = el('auditSummaryStats'); root.innerHTML='';
+  const root = el('auditSummaryStats'); clearNode(root);
   const groups = state.auditSummary?.total_by_decision || {};
   const byPolicy = state.auditSummary?.total_by_policy || {};
   const byModel = state.auditSummary?.total_by_model || {};
-  if(!Object.keys(groups).length && !Object.keys(byPolicy).length && !Object.keys(byModel).length){ root.innerHTML = '<div class="stat"><span>No audit summary yet.</span><b>0</b></div>'; return; }
+  if(!Object.keys(groups).length && !Object.keys(byPolicy).length && !Object.keys(byModel).length){ appendStat(root, 'No audit summary yet.', '0'); return; }
   Object.entries(groups).forEach(([key, value]) => {
-    const node = document.createElement('div'); node.className='stat';
-    node.innerHTML = '<span>decision: ' + key + '</span><b>' + value + '</b>';
+    const node = appendStat(root, 'decision: ' + key, value);
     node.addEventListener('click', () => { el('auditDecisionFilter').value = key; refreshAll(); });
-    root.appendChild(node);
   });
   Object.entries(byPolicy).slice(0, 3).forEach(([key, value]) => {
-    const node = document.createElement('div'); node.className='stat';
-    node.innerHTML = '<span>policy: ' + key + '</span><b>' + value + '</b>';
-    root.appendChild(node);
+    appendStat(root, 'policy: ' + key, value);
   });
   Object.entries(byModel).slice(0, 3).forEach(([key, value]) => {
-    const node = document.createElement('div'); node.className='stat';
-    node.innerHTML = '<span>final model: ' + key + '</span><b>' + value + '</b>';
-    root.appendChild(node);
+    appendStat(root, 'final model: ' + key, value);
   });
   const timelineRoot = el('auditTimelineStats');
   if(timelineRoot){
-    timelineRoot.innerHTML = '';
+    clearNode(timelineRoot);
     (state.auditSummary?.timeline || []).slice(-8).forEach(item => {
-      const node = document.createElement('div'); node.className='stat';
-      node.innerHTML = '<span>' + item.window + '</span><b>' + item.count + '</b>';
-      timelineRoot.appendChild(node);
+      appendStat(timelineRoot, item.window, item.count);
     });
   }
 }
 function renderTemplates(){
-  const root = el('templateList'); root.innerHTML='';
+  const root = el('templateList'); clearNode(root);
   const search = el('templateSearchInput')?.value?.trim().toLowerCase() || '';
   const category = el('templateCategoryFilter')?.value || '';
   const scenario = el('templateScenarioFilter')?.value || '';
@@ -525,14 +700,26 @@ function renderTemplates(){
     const matchesTag = !tag || (item.tags || []).some(value => (value || '').toLowerCase().includes(tag));
     return matchesSearch && matchesCategory && matchesScenario && matchesMaturity && matchesTag;
   });
-  if(!items.length){ root.innerHTML = '<div class="item">No templates loaded.</div>'; return; }
+  if(!items.length){ root.appendChild(emptyNode('item', 'No templates loaded.')); return; }
   items.forEach(item => {
     const node = document.createElement('div'); node.className='item';
-    node.innerHTML = '<strong>' + item.name + '</strong><div class="hint">' + item.description + '</div><div class="hint">category: ' + (item.category || 'custom') + ' | scenario: ' + (item.scenario || '-') + ' | maturity: ' + (item.maturity || '-') + '</div><div class="chips">' + ((item.tags || []).map(tag => '<span class="chip">' + tag + '</span>').join('') || '<span class="chip">no-tags</span>') + '</div><div class="hint">id: ' + item.id + '</div>';
-    node.addEventListener('click', () => { const cloned = JSON.parse(JSON.stringify(item.rule)); if(!cloned.id){ cloned.id = 'template-rule-' + Date.now(); } appendRuleTemplate(cloned); hydrateRule(cloned); log('Template appended: ' + item.name); });
+    appendText(node, 'strong', '', item.name || item.id || 'Template');
+    appendText(node, 'div', 'hint', item.description || '');
+    appendText(node, 'div', 'hint', 'category: ' + (item.category || 'custom') + ' | scenario: ' + (item.scenario || '-') + ' | maturity: ' + (item.maturity || '-'));
+    const chips = document.createElement('div');
+    chips.className = 'chips';
+    const tags = item.tags || [];
+    if(tags.length){
+      tags.forEach(tagValue => appendText(chips, 'span', 'chip', tagValue));
+    } else {
+      appendText(chips, 'span', 'chip', 'no-tags');
+    }
+    node.appendChild(chips);
+    appendText(node, 'div', 'hint', 'id: ' + (item.id || '-'));
+    node.addEventListener('click', () => { const cloned = JSON.parse(JSON.stringify(item.rule || {})); if(!cloned.id){ cloned.id = 'template-rule-' + Date.now(); } appendRuleTemplate(cloned); hydrateRule(cloned); log('Template appended: ' + (item.name || item.id || 'template')); });
     const editBtn = document.createElement('button'); editBtn.className='alt'; editBtn.textContent='Edit'; editBtn.addEventListener('click', async (event) => { event.stopPropagation(); const name = prompt('Template name', item.name); if(name === null) return; const description = prompt('Template description', item.description || ''); if(description === null) return; const scenario = prompt('Template scenario', item.scenario || ''); if(scenario === null) return; const maturity = prompt('Template maturity', item.maturity || 'stable'); if(maturity === null) return; const tags = prompt('Template tags (comma separated)', (item.tags || []).join(',')); if(tags === null) return; try { await readJSON(api.templates + '?template_id=' + encodeURIComponent(item.id), {method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ...item, name, description, scenario, maturity, tags: parseCSV(tags) })}); log('Template updated.'); await refreshAll(); } catch(err){ log(err.message, 'bad'); } });
     const cloneBtn = document.createElement('button'); cloneBtn.className='warn'; cloneBtn.textContent='Clone'; cloneBtn.addEventListener('click', async (event) => { event.stopPropagation(); try { await readJSON(api.templates + '/clone?template_id=' + encodeURIComponent(item.id), {method:'POST'}); log('Template cloned.'); await refreshAll(); } catch(err){ log(err.message, 'bad'); } });
-    const useBtn = document.createElement('button'); useBtn.className='alt'; useBtn.textContent='Use'; useBtn.addEventListener('click', (event) => { event.stopPropagation(); appendRuleTemplate(item.rule); log('Template inserted into current policy: ' + item.name); });
+    const useBtn = document.createElement('button'); useBtn.className='alt'; useBtn.textContent='Use'; useBtn.addEventListener('click', (event) => { event.stopPropagation(); appendRuleTemplate(item.rule || {}); log('Template inserted into current policy: ' + (item.name || item.id || 'template')); });
     const deleteBtn = document.createElement('button'); deleteBtn.className='danger'; deleteBtn.textContent='Delete'; deleteBtn.addEventListener('click', async (event) => { event.stopPropagation(); try { await readJSON(api.templates + '?template_id=' + encodeURIComponent(item.id), {method:'DELETE'}); log('Template deleted.'); await refreshAll(); } catch(err){ log(err.message, 'bad'); } });
     node.appendChild(editBtn);
     node.appendChild(cloneBtn);
@@ -549,24 +736,123 @@ function renderFallbackPreview(){
   renderRouteGraph();
 }
 
+function memberLabel(member){ return member?.model || ((member?.provider || '-') + '/' + (member?.suffix || '-')); }
+function weightedRoutes(){ return Array.isArray(state.weightedRoutes) ? state.weightedRoutes : []; }
+function setWeightedRoutes(items){ state.weightedRoutes = Array.isArray(items) ? items.slice() : []; renderWeightedRoutes(); }
+function renderWeightedRoutes(){
+  const root = el('weightedRoutesList');
+  if(!root) return;
+  clearNode(root);
+  const items = weightedRoutes();
+  if(!items.length){
+    root.appendChild(textNode('div', 'item', 'No weighted routes configured.'));
+    renderPoolHealth();
+    renderRouteGraph();
+    return;
+  }
+  items.forEach((member, index) => {
+    const node = document.createElement('div');
+    node.className = 'tableitem';
+    const summary = document.createElement('div');
+    appendText(summary, 'b', '', memberLabel(member));
+    appendText(summary, 'span', '', 'status ' + (member.status || 'active') + ' | enabled ' + String(member.enabled !== false) + ' | priority ' + (member.priority ?? 100));
+    node.appendChild(summary);
+    appendText(node, 'span', '', 'weight ' + (member.weight ?? 1) + ' | health ' + (member.health ?? 100) + ' | cap ' + (member.traffic_cap ?? 100));
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    appendButton(actions, 'alt', 'Edit', () => {
+      el('weightedRouteModelInput').value = member.model || '';
+      el('weightedRouteProviderInput').value = member.provider || '';
+      el('weightedRouteSuffixInput').value = member.suffix || '';
+      el('weightedRouteWeightInput').value = member.weight ?? 1;
+      el('weightedRoutePriorityInput').value = member.priority ?? 100;
+      el('weightedRouteEnabledInput').value = String(member.enabled !== false);
+      el('weightedRouteStatusInput').value = member.status || 'active';
+      el('weightedRouteReasonInput').value = member.reason || '';
+      el('weightedRouteHealthInput').value = member.health ?? 100;
+      el('weightedRouteTrafficCapInput').value = member.traffic_cap ?? 100;
+      state.weightedRoutes.splice(index, 1);
+      renderWeightedRoutes();
+      log('Weighted route loaded into editor.');
+    });
+    appendButton(actions, 'danger', 'Delete', () => {
+      state.weightedRoutes.splice(index, 1);
+      renderWeightedRoutes();
+      log('Weighted route removed.');
+    });
+    node.appendChild(actions);
+    root.appendChild(node);
+  });
+  renderPoolHealth();
+  renderRouteGraph();
+}
+
 function failoverHops(){ return Array.isArray(state.failoverHops) ? state.failoverHops : []; }
 function setFailoverHops(items){ state.failoverHops = Array.isArray(items) ? items.slice() : []; renderFailoverHops(); }
 function renderFailoverHops(){
   const root = el('failoverHopsList');
   if(!root) return;
-  root.innerHTML = '';
+  clearNode(root);
   const items = failoverHops();
-  if(!items.length){ root.innerHTML = '<div class="item">No failover hops configured.</div>'; return; }
+  if(!items.length){ root.appendChild(textNode('div', 'item', 'No failover hops configured.')); return; }
   items.forEach((hop, index) => {
     const node = document.createElement('div'); node.className='tableitem';
     const label = hop.model || ((hop.provider || '-') + '/' + (hop.suffix || '-'));
-    node.innerHTML = '<div><b>' + label + '</b><span>' + (hop.on_decision || 'reject') + ' | ' + (hop.reason || '-') + ' | enabled ' + String(hop.enabled !== false) + '</span></div><span>hop ' + (index + 1) + '</span>';
+    const summary = document.createElement('div');
+    appendText(summary, 'b', '', label);
+    appendText(summary, 'span', '', (hop.on_decision || 'reject') + ' | ' + (hop.reason || '-') + ' | enabled ' + String(hop.enabled !== false));
+    node.appendChild(summary);
+    appendText(node, 'span', '', 'hop ' + (index + 1));
     const actions = document.createElement('div'); actions.className='actions';
     const editBtn = document.createElement('button'); editBtn.className='alt'; editBtn.textContent='Edit'; editBtn.addEventListener('click', () => { el('failoverHopModelInput').value = hop.model || ''; el('failoverHopProviderInput').value = hop.provider || ''; el('failoverHopSuffixInput').value = hop.suffix || ''; el('failoverHopReasonInput').value = hop.reason || ''; el('failoverHopDecisionInput').value = hop.on_decision || 'reject'; el('failoverHopEnabledInput').value = String(hop.enabled !== false); state.failoverHops.splice(index, 1); renderFailoverHops(); log('Failover hop loaded into editor.'); });
     const deleteBtn = document.createElement('button'); deleteBtn.className='danger'; deleteBtn.textContent='Delete'; deleteBtn.addEventListener('click', () => { state.failoverHops.splice(index, 1); renderFailoverHops(); log('Failover hop removed.'); });
     actions.append(editBtn, deleteBtn); node.appendChild(actions); root.appendChild(node);
   });
   el('ruleFailoverHopsInput').value = JSON.stringify(items, null, 2);
+}
+
+function parseConditionGroups(inputID){
+  const raw = el(inputID).value.trim();
+  if(!raw) return [];
+  const parsed = JSON.parse(raw);
+  if(!Array.isArray(parsed)){ throw new Error(inputID + ' must be a JSON array.'); }
+  return parsed;
+}
+function renderConditionGroups(){
+  const root = el('conditionGroupsPreview');
+  if(!root) return;
+  clearNode(root);
+  let anyOf = [];
+  let allOf = [];
+  try {
+    anyOf = el('ruleUseAnyOf').value === 'true' ? parseConditionGroups('ruleAnyOfInput') : [];
+    allOf = el('ruleUseAllOf').value === 'true' ? parseConditionGroups('ruleAllOfInput') : [];
+  } catch(err) {
+    const node = textNode('div', 'item', 'Invalid condition group JSON: ' + err.message);
+    root.appendChild(node);
+    return;
+  }
+  const addGroup = (kind, group, index) => {
+    const node = document.createElement('div');
+    node.className = 'item';
+    appendText(node, 'strong', '', kind + ' #' + (index + 1));
+    appendText(node, 'div', 'hint', 'models ' + ((group.models || []).length) + ' | paths ' + ((group.paths || []).length) + ' | providers ' + ((group.providers || []).length));
+    appendText(node, 'div', 'hint', 'headers ' + Object.keys(group.headers || {}).length + ' | query ' + Object.keys(group.query || {}).length + ' | body ' + Object.keys(group.body_contains || {}).length + ' | metadata ' + Object.keys(group.metadata_contains || {}).length);
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    appendButton(actions, 'alt', 'Load', (event) => {
+      event.stopPropagation();
+      loadMatchGroupIntoForm(group);
+      log('Loaded ' + kind + ' condition group #' + (index + 1) + '.');
+    });
+    node.appendChild(actions);
+    root.appendChild(node);
+  };
+  anyOf.forEach((group, index) => addGroup('Any-Of', group || {}, index));
+  allOf.forEach((group, index) => addGroup('All-Of', group || {}, index));
+  if(!anyOf.length && !allOf.length){
+    root.appendChild(textNode('div', 'item', 'No condition groups configured.'));
+  }
 }
 
 function bindTopologyActions(scope, policy, stage, rule, stageKey){
@@ -621,10 +907,10 @@ function bindTopologyActions(scope, policy, stage, rule, stageKey){
 function renderGlobalTopology(){
   const root = el('globalTopologyOut');
   if(!root) return;
-  root.innerHTML = '';
+  clearNode(root);
   root.className = 'topology-flow';
   const policies = state.policies?.key_policies || [];
-  if(!policies.length){ root.innerHTML = '<div class="item">No policy topology yet.</div>'; return; }
+  if(!policies.length){ root.appendChild(emptyNode('item', 'No policy topology yet.')); return; }
   policies.slice(0, 8).forEach(policy => {
     const rules = policy.rules || [];
     const pools = rules.filter(rule => rule.actions?.route_pool).length;
@@ -643,7 +929,16 @@ function renderGlobalTopology(){
     policyWrap.title = 'Policy node: click to focus, double-click to collapse or expand. Rules: ' + rules.length + ', pools: ' + pools + ', failovers: ' + failovers + ', mirrors: ' + mirrors + '.';
     const policyNode = document.createElement('div');
     policyNode.className = 'item';
-    policyNode.innerHTML = '<strong>' + (policy.display_name || policy.key_id) + '</strong><div class="hint">rules ' + rules.length + ' | pools ' + pools + ' | failovers ' + failovers + ' | mirrors ' + mirrors + '</div><div class="' + statTone(totalRuleHitsHour) + '">hits total ' + totalRuleHits + ' | 5m ' + totalRuleHits5m + ' | 1h ' + totalRuleHitsHour + ' | 24h ' + totalRuleHits24h + ' | current ' + windowHits.label + '</div><div class="hint">stage modes: pre-check ' + (policy.stage_policy?.['pre-check']?.mode || 'first-match') + ' -> route ' + (policy.stage_policy?.route?.mode || 'first-match') + ' | route-stage hits ' + routeStageHits + '</div><div class="hint">' + (collapsed ? '[+] expand policy' : '[-] collapse policy') + '</div><div class="node-detail"><b>Policy Detail</b><span>Key id: ' + (policy.key_id || '-') + '</span><span>Display: ' + (policy.display_name || '-') + '</span><span>Limits: day ' + (policy.limits?.requests_per_day || 0) + ', min ' + (policy.limits?.requests_per_minute || 0) + ', inflight ' + (policy.limits?.max_inflight || 0) + '</span></div>';
+    appendText(policyNode, 'strong', '', policy.display_name || policy.key_id);
+    appendText(policyNode, 'div', 'hint', 'rules ' + rules.length + ' | pools ' + pools + ' | failovers ' + failovers + ' | mirrors ' + mirrors);
+    appendText(policyNode, 'div', statTone(totalRuleHitsHour), 'hits total ' + totalRuleHits + ' | 5m ' + totalRuleHits5m + ' | 1h ' + totalRuleHitsHour + ' | 24h ' + totalRuleHits24h + ' | current ' + windowHits.label);
+    appendText(policyNode, 'div', 'hint', 'stage modes: pre-check ' + (policy.stage_policy?.['pre-check']?.mode || 'first-match') + ' -> route ' + (policy.stage_policy?.route?.mode || 'first-match') + ' | route-stage hits ' + routeStageHits);
+    appendText(policyNode, 'div', 'hint', collapsed ? '[+] expand policy' : '[-] collapse policy');
+    appendNodeDetail(policyNode, 'Policy Detail', [
+      'Key id: ' + (policy.key_id || '-'),
+      'Display: ' + (policy.display_name || '-'),
+      'Limits: day ' + (policy.limits?.requests_per_day || 0) + ', min ' + (policy.limits?.requests_per_minute || 0) + ', inflight ' + (policy.limits?.max_inflight || 0)
+    ]);
     policyNode.title = 'Policy summary: ' + (policy.display_name || policy.key_id) + ' | rules ' + rules.length + ' | pools ' + pools + ' | failovers ' + failovers + ' | mirrors ' + mirrors;
     policyNode.addEventListener('click', () => { state.selectedKeyId = policy.key_id || ''; state.selectedRuleId = ''; hydrateSelectedPolicy(); renderKeys(); renderRules(); renderRouteGraph(); renderCurrentNodeDetail(); log('Topology jumped to policy: ' + (policy.display_name || policy.key_id)); });
     bindTopologyActions(policyNode, policy, '', null, '');
@@ -662,7 +957,19 @@ function renderGlobalTopology(){
         stageWrap.title = 'Stage node: double-click to collapse or expand this stage. Rules: ' + stageRules.length + ', total hits: ' + (state.stageHitCounts[stage] || 0) + ', current window hits: ' + (windowHits.stage[stage] || 0) + '.';
         const stageNode = document.createElement('div');
         stageNode.className = 'item';
-        stageNode.innerHTML = '<strong>Stage: ' + stage + '</strong><div class="' + statTone(state.stageHitCountsLastHour[stage] || 0) + '">rules ' + stageRules.length + ' | hits ' + (state.stageHitCounts[stage] || 0) + ' | 5m ' + (state.stageHitCountsLast5m[stage] || 0) + ' | 1h ' + (state.stageHitCountsLastHour[stage] || 0) + ' | 24h ' + (state.stageHitCountsLast24h[stage] || 0) + '</div><div class="hint">' + (stageCollapsed ? '[+] expand stage' : '[-] collapse stage') + '</div><div class="node-detail"><b>Stage Detail</b><span>Current window hits: ' + (windowHits.stage[stage] || 0) + '</span><span>Stage mode: ' + ((policy.stage_policy?.[stage]?.mode) || (stage === 'mirror' || stage === 'post-audit' ? 'continue-all' : 'first-match')) + '</span><span>Actions</span><div class="actions"><button class="alt" data-topology-action="toggle-stage">Toggle Stage</button><button class="alt" data-topology-action="copy-stage-summary">Copy Summary</button></div></div>';
+        appendText(stageNode, 'strong', '', 'Stage: ' + stage);
+        appendText(stageNode, 'div', statTone(state.stageHitCountsLastHour[stage] || 0), 'rules ' + stageRules.length + ' | hits ' + (state.stageHitCounts[stage] || 0) + ' | 5m ' + (state.stageHitCountsLast5m[stage] || 0) + ' | 1h ' + (state.stageHitCountsLastHour[stage] || 0) + ' | 24h ' + (state.stageHitCountsLast24h[stage] || 0));
+        appendText(stageNode, 'div', 'hint', stageCollapsed ? '[+] expand stage' : '[-] collapse stage');
+        const stageDetail = appendNodeDetail(stageNode, 'Stage Detail', [
+          'Current window hits: ' + (windowHits.stage[stage] || 0),
+          'Stage mode: ' + ((policy.stage_policy?.[stage]?.mode) || (stage === 'mirror' || stage === 'post-audit' ? 'continue-all' : 'first-match')),
+          'Actions'
+        ]);
+        const stageActions = document.createElement('div');
+        stageActions.className = 'actions';
+        appendButton(stageActions, 'alt', 'Toggle Stage').dataset.topologyAction = 'toggle-stage';
+        appendButton(stageActions, 'alt', 'Copy Summary').dataset.topologyAction = 'copy-stage-summary';
+        stageDetail.appendChild(stageActions);
         stageNode.title = 'Stage ' + stage + ' | total hits ' + (state.stageHitCounts[stage] || 0) + ' | current window ' + (windowHits.stage[stage] || 0);
         stageNode.addEventListener('dblclick', (event) => { event.preventDefault(); toggleTopology(stageKey); });
         bindTopologyActions(stageNode, policy, stage, null, stageKey);
@@ -679,9 +986,30 @@ function renderGlobalTopology(){
             const mirrorItems = (rule.actions?.mirror_models || []).map(model => ({ model }));
             const previewFocused = poolMembers.some(member => previewMatches('pool-member', previewChipLabel('pool-member', member))) || failoverItems.some(hop => previewMatches('failover-hop', previewChipLabel('failover-hop', hop))) || mirrorItems.some(item => previewMatches('mirror-target', previewChipLabel('mirror-target', item)));
             const previewLabel = previewFocused ? state.focusedPreviewLabel : '';
-            const subnodes = renderSubnodeList('pool-member', poolMembers, { kind: 'route', emptyText: 'No route pool members.', summary: (member, index) => 'member ' + (index + 1) + ' | weight ' + (member.weight ?? 1) + ' | priority ' + (member.priority ?? 100), meta: member => 'status ' + (member.status || 'active') + ' | health ' + (member.health ?? 100) + ' | cap ' + (member.traffic_cap ?? 100) }) + renderSubnodeList('failover-hop', failoverItems, { kind: 'failover', emptyText: '', summary: (hop, index) => 'hop ' + (index + 1) + ' | decision ' + (hop.on_decision || 'reject'), meta: hop => (hop.reason || 'fallback') + ' | enabled ' + String(hop.enabled !== false) }) + renderSubnodeList('mirror-target', mirrorItems, { kind: 'mirror', emptyText: '', summary: (_item, index) => 'mirror ' + (index + 1), meta: () => 'shadow traffic target' });
             child.className = 'topology-rule' + (state.selectedRuleId === (rule.id || '') ? ' active' : '') + (previewFocused ? ' preview-focus' : '');
-            child.innerHTML = '<div class="item"><strong>Rule: ' + (rule.id || '-') + '</strong><div class="' + statTone(state.ruleHitCountsLastHour[rule.id || ''] || 0) + '">stage ' + stage + ' | total ' + (state.ruleHitCounts[rule.id || ''] || 0) + ' | 5m ' + (state.ruleHitCountsLast5m[rule.id || ''] || 0) + ' | 1h ' + (state.ruleHitCountsLastHour[rule.id || ''] || 0) + ' | 24h ' + (state.ruleHitCountsLast24h[rule.id || ''] || 0) + '</div><div class="node-detail"><b>Rule Detail</b><span>Model: ' + ((rule.match?.models || [])[0] || '-') + '</span><span>Route pool: ' + (rule.actions?.route_pool?.name || '-') + '</span><span>Failover hops: ' + ((rule.actions?.failover_hops || []).length) + ' | Mirrors: ' + ((rule.actions?.mirror_models || []).length) + '</span>' + (previewLabel ? '<span>Preview focus: ' + previewLabel + '</span>' : '') + '<span>Targets</span>' + subnodes + '<span>Actions</span><div class="actions"><button class="alt" data-topology-action="focus-rule">Focus Rule</button><button class="alt" data-topology-action="open-rule-dry-run">Dry-Run</button><button class="alt" data-topology-action="copy-rule-summary-inline">Copy Summary</button></div></div></div>';
+            const ruleItem = document.createElement('div');
+            ruleItem.className = 'item';
+            appendText(ruleItem, 'strong', '', 'Rule: ' + (rule.id || '-'));
+            appendText(ruleItem, 'div', statTone(state.ruleHitCountsLastHour[rule.id || ''] || 0), 'stage ' + stage + ' | total ' + (state.ruleHitCounts[rule.id || ''] || 0) + ' | 5m ' + (state.ruleHitCountsLast5m[rule.id || ''] || 0) + ' | 1h ' + (state.ruleHitCountsLastHour[rule.id || ''] || 0) + ' | 24h ' + (state.ruleHitCountsLast24h[rule.id || ''] || 0));
+            const detailLines = [
+              'Model: ' + ((rule.match?.models || [])[0] || '-'),
+              'Route pool: ' + (rule.actions?.route_pool?.name || '-'),
+              'Failover hops: ' + ((rule.actions?.failover_hops || []).length) + ' | Mirrors: ' + ((rule.actions?.mirror_models || []).length)
+            ];
+            if(previewLabel) detailLines.push('Preview focus: ' + previewLabel);
+            detailLines.push('Targets');
+            const ruleDetail = appendNodeDetail(ruleItem, 'Rule Detail', detailLines);
+            appendSubnodeList(ruleDetail, 'pool-member', poolMembers, { kind: 'route', emptyText: 'No route pool members.', summary: (member, index) => 'member ' + (index + 1) + ' | weight ' + (member.weight ?? 1) + ' | priority ' + (member.priority ?? 100), meta: member => 'status ' + (member.status || 'active') + ' | health ' + (member.health ?? 100) + ' | cap ' + (member.traffic_cap ?? 100) });
+            appendSubnodeList(ruleDetail, 'failover-hop', failoverItems, { kind: 'failover', emptyText: '', summary: (hop, index) => 'hop ' + (index + 1) + ' | decision ' + (hop.on_decision || 'reject'), meta: hop => (hop.reason || 'fallback') + ' | enabled ' + String(hop.enabled !== false) });
+            appendSubnodeList(ruleDetail, 'mirror-target', mirrorItems, { kind: 'mirror', emptyText: '', summary: (_item, index) => 'mirror ' + (index + 1), meta: () => 'shadow traffic target' });
+            appendText(ruleDetail, 'span', '', 'Actions');
+            const ruleActions = document.createElement('div');
+            ruleActions.className = 'actions';
+            appendButton(ruleActions, 'alt', 'Focus Rule').dataset.topologyAction = 'focus-rule';
+            appendButton(ruleActions, 'alt', 'Dry-Run').dataset.topologyAction = 'open-rule-dry-run';
+            appendButton(ruleActions, 'alt', 'Copy Summary').dataset.topologyAction = 'copy-rule-summary-inline';
+            ruleDetail.appendChild(ruleActions);
+            child.appendChild(ruleItem);
             child.title = 'Rule ' + (rule.id || '-') + ' | current window hits ' + (windowHits.rule[rule.id || ''] || 0) + ' | match model ' + ((rule.match?.models || [])[0] || '-') + ' | route pool ' + (rule.actions?.route_pool?.name || '-') + ' | failover hops ' + ((rule.actions?.failover_hops || []).length) + ' | click to focus';
             child.addEventListener('click', () => { state.selectedKeyId = policy.key_id || ''; state.selectedRuleId = rule.id || ''; hydrateSelectedPolicy(); hydrateRule(rule); renderKeys(); renderRules(); renderRouteGraph(); renderCurrentNodeDetail(); log('Topology jumped to rule: ' + (rule.id || '-')); });
             bindTopologyActions(child, policy, stage, rule, stageKey);
@@ -699,14 +1027,14 @@ function renderGlobalTopology(){
 function renderPoolHealth(){
   const root = el('poolHealthOut');
   if(!root) return;
-  root.innerHTML = '';
+  clearNode(root);
   const members = weightedRoutes();
   const usage = state.usage || [];
   const audit = state.audit || [];
-  if(!members.length){ root.innerHTML = '<div class="item">No pool members configured.</div>'; return; }
+  if(!members.length){ root.appendChild(textNode('div', 'item', 'No pool members configured.')); return; }
   const latestUsage = usage[0] || null;
   members.forEach((member, index) => {
-    const label = member.model || ((member.provider || '-') + '/' + (member.suffix || '-'));
+    const label = memberLabel(member);
     const enabled = member.enabled !== false;
     const windowHits = currentWindowHitMaps();
     const hitCount = state.memberHitCounts[String(label).toLowerCase()] || audit.filter(item => (item.final_model || '').toLowerCase() === String(label).toLowerCase()).length;
@@ -714,7 +1042,25 @@ function renderPoolHealth(){
     const node = document.createElement('div');
     node.className = 'item';
     node.title = 'Pool member health comes from configured values plus recent hit counts in the selected window.';
-    node.innerHTML = '<strong>' + label + '</strong><div class="hint">status ' + (member.status || 'active') + ' | enabled ' + enabled + ' | priority ' + (member.priority ?? 100) + '</div><div class="hint">health ' + (member.health ?? 100) + ' | traffic cap ' + (member.traffic_cap ?? 100) + ' | weight ' + (member.weight ?? 1) + '</div><div class="hint">hits ' + hitCount + ' | current ' + windowHits.label + ' ' + hitWindow + (latestUsage ? ' | inflight ' + latestUsage.inflight + ' | minute ' + latestUsage.requests_minute : '') + '</div><div class="hint">' + (member.reason || 'no member note') + '</div><div class="actions"><button class="alt" data-member-op="focus" data-member-index="' + index + '">Focus</button><button class="alt" data-member-op="active" data-member-index="' + index + '">Active</button><button class="warn" data-member-op="drain" data-member-index="' + index + '">Drain</button><button class="danger" data-member-op="offline" data-member-index="' + index + '">Offline</button><button class="alt" data-member-op="cap-down" data-member-index="' + index + '">Cap -10</button><button class="alt" data-member-op="cap-up" data-member-index="' + index + '">Cap +10</button></div><div class="actions"><button class="alt" data-member-op="weight-down" data-member-index="' + index + '">Weight -1</button><button class="alt" data-member-op="weight-up" data-member-index="' + index + '">Weight +1</button><button class="alt" data-member-op="priority-down" data-member-index="' + index + '">Priority -10</button><button class="alt" data-member-op="priority-up" data-member-index="' + index + '">Priority +10</button><button class="alt" data-member-op="health-down" data-member-index="' + index + '">Health -10</button><button class="alt" data-member-op="health-up" data-member-index="' + index + '">Health +10</button></div>';
+    appendText(node, 'strong', '', label);
+    appendText(node, 'div', 'hint', 'status ' + (member.status || 'active') + ' | enabled ' + enabled + ' | priority ' + (member.priority ?? 100));
+    appendText(node, 'div', 'hint', 'health ' + (member.health ?? 100) + ' | traffic cap ' + (member.traffic_cap ?? 100) + ' | weight ' + (member.weight ?? 1));
+    appendText(node, 'div', 'hint', 'hits ' + hitCount + ' | current ' + windowHits.label + ' ' + hitWindow + (latestUsage ? ' | inflight ' + latestUsage.inflight + ' | minute ' + latestUsage.requests_minute : ''));
+    appendText(node, 'div', 'hint', member.reason || 'no member note');
+    const actionRows = [
+      [['focus', 'Focus', 'alt'], ['active', 'Active', 'alt'], ['drain', 'Drain', 'warn'], ['offline', 'Offline', 'danger'], ['cap-down', 'Cap -10', 'alt'], ['cap-up', 'Cap +10', 'alt']],
+      [['weight-down', 'Weight -1', 'alt'], ['weight-up', 'Weight +1', 'alt'], ['priority-down', 'Priority -10', 'alt'], ['priority-up', 'Priority +10', 'alt'], ['health-down', 'Health -10', 'alt'], ['health-up', 'Health +10', 'alt']]
+    ];
+    actionRows.forEach(row => {
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      row.forEach(([op, labelText, className]) => {
+        const button = appendButton(actions, className, labelText);
+        button.dataset.memberOp = op;
+        button.dataset.memberIndex = String(index);
+      });
+      node.appendChild(actions);
+    });
     root.appendChild(node);
   });
   root.querySelectorAll('[data-member-op]').forEach(button => {
@@ -755,7 +1101,7 @@ function renderPoolHealth(){
 function renderRouteGraph(){
   const root = el('routeGraphOut');
   if(!root) return;
-  root.innerHTML = '';
+  clearNode(root);
   try {
     const rule = ruleFromVisualForm();
     const poolMembers = rule.actions?.route_pool?.members || rule.actions?.weighted_routes || [];
@@ -771,23 +1117,32 @@ function renderRouteGraph(){
       const node = document.createElement('div');
       node.className = 'item';
       const badge = block.tone === 'warn' ? 'warn' : (block.tone === 'active' ? 'pill' : 'hint');
-      node.innerHTML = '<strong>' + (index + 1) + '. ' + block.title + '</strong><div class="' + badge + '">' + block.body + '</div><div class="hint">' + (block.meta || 'Request enters gateway rule and flows to the next node.') + '</div>' + (index < blocks.length - 1 ? '<div class="hint">|</div><div class="hint">v</div>' : '');
+      appendText(node, 'strong', '', (index + 1) + '. ' + block.title);
+      appendText(node, 'div', badge, block.body);
+      appendText(node, 'div', 'hint', block.meta || 'Request enters gateway rule and flows to the next node.');
+      if(index < blocks.length - 1){
+        appendText(node, 'div', 'hint', '|');
+        appendText(node, 'div', 'hint', 'v');
+      }
       root.appendChild(node);
     });
   } catch {
-    root.innerHTML = '<div class="item">No route graph yet.</div>';
+    root.appendChild(emptyNode('item', 'No route graph yet.'));
   }
 }
 function renderRules(){
-  const root = el('rulesList'); root.innerHTML='';
+  const root = el('rulesList'); clearNode(root);
   const rules = selectedPolicy()?.rules || [];
-  if(!rules.length){ root.innerHTML = '<div class="item">No rules yet.</div>'; return; }
+  if(!rules.length){ root.appendChild(emptyNode('item', 'No rules yet.')); return; }
   rules.forEach(rule => {
     const node = document.createElement('div'); node.className='item' + (state.selectedRuleId === rule.id ? ' active' : '');
     const action = rule.actions?.route_to_model || (rule.actions?.route_pool?.name || '') || (rule.actions?.fallback_models || [])[0] || (rule.actions?.deny ? 'deny' : 'pass');
     const anyCount = (rule.match?.any_of || []).length;
     const allCount = (rule.match?.all_of || []).length;
-    node.innerHTML = '<strong>' + (rule.id || 'rule') + '</strong><div class="hint">priority ' + (rule.priority || 0) + ' | on_match ' + (rule.on_match || 'stop') + '</div><div class="hint">action: ' + action + '</div><div class="hint">groups: any=' + anyCount + ' / all=' + allCount + '</div>';
+    appendText(node, 'strong', '', rule.id || 'rule');
+    appendText(node, 'div', 'hint', 'priority ' + (rule.priority || 0) + ' | on_match ' + (rule.on_match || 'stop'));
+    appendText(node, 'div', 'hint', 'action: ' + action);
+    appendText(node, 'div', 'hint', 'groups: any=' + anyCount + ' / all=' + allCount);
     node.addEventListener('click', () => { state.selectedRuleId = rule.id; clearPreviewFocus(); syncURLState(); hydrateRule(rule); renderRules(); renderCurrentNodeDetail(); renderGlobalTopology(); });
     root.appendChild(node);
   });
@@ -809,11 +1164,15 @@ function hydrateRule(rule){
   const metaEntries = Object.entries(rule.match?.metadata_contains || {});
   el('ruleMetadataInput').value = metaEntries.map(([k,v]) => k + ':' + v).join(';');
   el('ruleRouteToModelInput').value = rule.actions?.route_to_model || '';
+  el('ruleForceProviderInput').value = rule.actions?.force_provider_prefix || '';
+  el('ruleShardByInput').value = rule.actions?.shard_by || '';
+  el('ruleMirrorModelsInput').value = (rule.actions?.mirror_models || []).join(',');
   el('ruleFallbackModelInput').value = (rule.actions?.fallback_models || []).join(',');
   el('ruleFailoverChainInput').value = (rule.actions?.failover_chain || []).join(',');
   el('routePoolNameInput').value = rule.actions?.route_pool?.name || '';
   el('routePoolModeInput').value = rule.actions?.route_pool?.mode || 'weighted';
   el('routePoolAffinityInput').value = rule.actions?.route_pool?.provider_affinity || '';
+  setWeightedRoutes(rule.actions?.route_pool?.members || rule.actions?.weighted_routes || []);
   setFailoverHops(rule.actions?.failover_hops || []);
   el('ruleFailoverHopsInput').value = JSON.stringify(rule.actions?.failover_hops || [], null, 2);
   el('ruleFailoverChainInput').value = (rule.actions?.failover_chain || []).join(',');
@@ -909,7 +1268,7 @@ function auditQuery(){
 }
 async function refreshAll(){
   try{
-    const [keys, policies, usage, audit, auditSummary, templates] = await Promise.all([readJSON(api.keys), readJSON(api.policies), readJSON(api.usage), readJSON(api.audit + '?' + auditQuery()), readJSON(api.auditSummary + '?' + auditQuery()), readJSON(api.templates)]);
+    const [keys, policies, usage, audit, auditSummary, templates, health] = await Promise.all([readJSON(api.keys), readJSON(api.policies), readJSON(api.usage), readJSON(api.audit + '?' + auditQuery()), readJSON(api.auditSummary + '?' + auditQuery()), readJSON(api.templates), readJSON(api.health)]);
     state.keys = keys.keys || [];
     state.policies = policies || { key_policies: [], default_policy: {} };
     state.usage = usage.usage || [];
@@ -928,12 +1287,14 @@ async function refreshAll(){
     state.audit = audit.items || [];
     state.auditSummary = auditSummary || { total_by_decision: {}, total_by_reason: {}, total_by_rule: {}, total_by_policy: {}, total_by_model: {} };
     state.templates = templates.items || [];
+    state.health = health || {};
     if(!state.selectedKeyId && state.keys.length){ state.selectedKeyId = state.keys[0].key_id; }
     syncURLState();
     if(state.selectedKeyId && !(state.keys || []).some(item => item.key_id === state.selectedKeyId)){ state.selectedKeyId = state.keys[0]?.key_id || ''; }
     el('policiesBox').value = JSON.stringify(state.policies, null, 2);
     renderKeys();
     renderUsage();
+    renderHealth();
     renderAuditSummary();
     renderAudit();
     hydrateSelectedPolicy();
@@ -1000,9 +1361,26 @@ function setFallbackChain(chain){ el('ruleFallbackModelInput').value = chain.joi
 el('addFallbackHopBtn').addEventListener('click', () => { const next = prompt('Fallback model'); if(!next) return; const chain = fallbackChain(); chain.push(next.trim()); setFallbackChain(chain); log('Fallback hop added.'); });
 el('removeFallbackHopBtn').addEventListener('click', () => { const chain = fallbackChain(); if(!chain.length) return; chain.pop(); setFallbackChain(chain); log('Fallback hop removed.'); });
 el('sortFallbackHopsBtn').addEventListener('click', () => { const chain = fallbackChain().sort(); setFallbackChain(chain); log('Fallback chain sorted.'); });
+el('addFailoverHopBtn').addEventListener('click', () => {
+  const model = el('failoverHopModelInput').value.trim();
+  const provider = el('failoverHopProviderInput').value.trim();
+  const suffix = el('failoverHopSuffixInput').value.trim();
+  if(!model && !(provider && suffix)){ log('Enter a failover model or provider+suffix first.', 'bad'); return; }
+  state.failoverHops.push({ model, provider, suffix, reason: el('failoverHopReasonInput').value.trim(), on_decision: el('failoverHopDecisionInput').value || 'reject', enabled: el('failoverHopEnabledInput').value !== 'false' });
+  el('failoverHopModelInput').value = '';
+  el('failoverHopProviderInput').value = '';
+  el('failoverHopSuffixInput').value = '';
+  el('failoverHopReasonInput').value = '';
+  el('failoverHopDecisionInput').value = 'reject';
+  el('failoverHopEnabledInput').value = 'true';
+  renderFailoverHops();
+  renderRouteGraph();
+  log('Failover hop added.');
+});
+el('clearFailoverHopsBtn').addEventListener('click', () => { state.failoverHops = []; renderFailoverHops(); renderRouteGraph(); log('Failover hops cleared.'); });
 el('addWeightedRouteBtn').addEventListener('click', () => { const model = el('weightedRouteModelInput').value.trim(); const provider = el('weightedRouteProviderInput').value.trim(); const suffix = el('weightedRouteSuffixInput').value.trim(); if(!model && !(provider && suffix)){ log('Enter a weighted route model or provider+suffix first.', 'bad'); return; } const weight = Number(el('weightedRouteWeightInput').value || 1) || 1; const priority = Number(el('weightedRoutePriorityInput').value || 100) || 100; const enabled = el('weightedRouteEnabledInput').value === 'true'; const status = el('weightedRouteStatusInput').value || 'active'; const reason = el('weightedRouteReasonInput').value.trim(); const health = Number(el('weightedRouteHealthInput').value || 100) || 100; const trafficCap = Number(el('weightedRouteTrafficCapInput').value || 100) || 100; state.weightedRoutes.push({ model, provider, suffix, weight, priority, enabled, status, reason, health, traffic_cap: trafficCap }); el('weightedRouteModelInput').value=''; el('weightedRouteProviderInput').value=''; el('weightedRouteSuffixInput').value=''; el('weightedRouteWeightInput').value='1'; el('weightedRoutePriorityInput').value='100'; el('weightedRouteEnabledInput').value='true'; el('weightedRouteStatusInput').value='active'; el('weightedRouteReasonInput').value=''; el('weightedRouteHealthInput').value='100'; el('weightedRouteTrafficCapInput').value='100'; renderWeightedRoutes(); log('Weighted route added.'); });
 el('clearWeightedRoutesBtn').addEventListener('click', () => { state.weightedRoutes = []; renderWeightedRoutes(); log('Weighted routes cleared.'); });
-el('sortWeightedRoutesBtn').addEventListener('click', () => { state.weightedRoutes = weightedRoutes().slice().sort((a, b) => a.model.localeCompare(b.model)); renderWeightedRoutes(); log('Weighted routes sorted.'); });
+el('sortWeightedRoutesBtn').addEventListener('click', () => { state.weightedRoutes = weightedRoutes().slice().sort((a, b) => memberLabel(a).localeCompare(memberLabel(b))); renderWeightedRoutes(); log('Weighted routes sorted.'); });
 el('saveTemplateBtn').addEventListener('click', async () => {
   try{
     const rule = ruleFromVisualForm();
@@ -1096,6 +1474,11 @@ function ruleFromVisualForm(){
   const mirrorModels = el('ruleMirrorModelsInput').value.trim();
   const shardBy = el('ruleShardByInput').value;
   const fallback = el('ruleFallbackModelInput').value.trim();
+  const failover = el('ruleFailoverChainInput').value.trim();
+  const failoverHopsRaw = el('ruleFailoverHopsInput').value.trim();
+  const routePoolName = el('routePoolNameInput').value.trim();
+  const routePoolMode = el('routePoolModeInput').value;
+  const routePoolAffinity = el('routePoolAffinityInput').value.trim();
   const denyProvider = el('ruleDenyProviderInput').value.trim();
   const reasonTag = el('ruleReasonTagInput').value.trim();
   const useAnyOf = el('ruleUseAnyOf').value === 'true';
@@ -1114,7 +1497,14 @@ function ruleFromVisualForm(){
   if(forceProvider){ rule.actions.force_provider_prefix = forceProvider; }
   if(mirrorModels){ rule.actions.mirror_models = parseCSV(mirrorModels); }
   if(shardBy){ rule.actions.shard_by = shardBy; }
-  if(weightedRoutes().length){ rule.actions.weighted_routes = weightedRoutes(); rule.actions.route_pool = { name: routePoolName, mode: routePoolMode || 'weighted', provider_affinity: routePoolAffinity, members: weightedRoutes() }; }
+  const routes = weightedRoutes();
+  if(routes.length){
+    if(routePoolName || routePoolAffinity){
+      rule.actions.route_pool = { name: routePoolName, mode: routePoolMode || 'weighted', provider_affinity: routePoolAffinity, members: routes };
+    } else {
+      rule.actions.weighted_routes = routes;
+    }
+  }
   if(fallback){ rule.actions.fallback_models = parseCSV(fallback); }
   if(failover){ rule.actions.failover_chain = parseCSV(failover); }
   if(failoverHops().length){ rule.actions.failover_hops = failoverHops(); } else if(failoverHopsRaw){ rule.actions.failover_hops = JSON.parse(failoverHopsRaw); }
@@ -1129,6 +1519,7 @@ function parsePairs(raw){
   raw.split(';').map(v => v.trim()).filter(Boolean).forEach(item => { const parts = item.split(':'); if(parts.length >= 2){ out[parts.shift().trim()] = parts.join(':').trim(); } });
   return out;
 }
+function parseCSV(raw){ return String(raw || '').split(',').map(v => v.trim()).filter(Boolean); }
 function appendRuleTemplate(template){
   const current = JSON.parse(el('rulesBox').value || '[]');
   const next = JSON.parse(JSON.stringify(template));

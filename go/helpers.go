@@ -15,6 +15,25 @@ import (
 func normalizeConfig(cfg pluginConfig) pluginConfig {
 	cfg.Default = normalizePolicy(cfg.Default)
 	cfg.KeyPolicies = normalizeKeyPolicies(cfg.KeyPolicies)
+	cfg.Cluster = normalizeClusterConfig(cfg.Cluster)
+	return cfg
+}
+
+func normalizeClusterConfig(cfg clusterConfig) clusterConfig {
+	cfg.Backend = strings.ToLower(strings.TrimSpace(cfg.Backend))
+	cfg.Redis.Addr = strings.TrimSpace(cfg.Redis.Addr)
+	cfg.Redis.Username = strings.TrimSpace(cfg.Redis.Username)
+	cfg.Redis.KeyPrefix = strings.TrimSpace(cfg.Redis.KeyPrefix)
+	switch strings.ToLower(strings.TrimSpace(cfg.Redis.FailureMode)) {
+	case "", "reject", "fail_closed", "fail-closed":
+		cfg.Redis.FailureMode = "reject"
+	case "allow", "fail_open", "fail-open":
+		cfg.Redis.FailureMode = "allow"
+	case "local", "local_fallback", "local-fallback":
+		cfg.Redis.FailureMode = "local_fallback"
+	default:
+		cfg.Redis.FailureMode = "reject"
+	}
 	return cfg
 }
 
@@ -366,6 +385,18 @@ func matchesSchedule(schedule scheduleConfig, now time.Time) bool {
 	if schedule.Start == "" || schedule.End == "" {
 		return true
 	}
-	current := now.Format("15:04")
-	return current >= schedule.Start && current <= schedule.End
+	return withinClockWindow(now.Format("15:04"), schedule.Start, schedule.End)
+}
+
+func withinClockWindow(current, start, end string) bool {
+	current = strings.TrimSpace(current)
+	start = strings.TrimSpace(start)
+	end = strings.TrimSpace(end)
+	if start == "" || end == "" {
+		return true
+	}
+	if start <= end {
+		return current >= start && current <= end
+	}
+	return current >= start || current <= end
 }

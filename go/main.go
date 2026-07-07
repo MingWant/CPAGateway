@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
@@ -13,6 +12,8 @@ import (
 )
 
 var gatewayState = newPluginState()
+
+const gatewayPluginVersion = "0.1.0"
 
 func main() {}
 
@@ -51,25 +52,18 @@ func configure(raw []byte) error {
 			return err
 		}
 	}
+	cfg = normalizeConfig(cfg)
+	redisCounters := newRedisCounterStore(cfg.Cluster)
 	gatewayState.mu.Lock()
-	defer gatewayState.mu.Unlock()
-	gatewayState.config = normalizeConfig(cfg)
-	if gatewayState.usage == nil {
-		gatewayState.usage = make(map[string]*usageCounter)
+	oldRedisCounters := gatewayState.redisCounters
+	gatewayState.config = cfg
+	gatewayState.redisCounters = redisCounters
+	gatewayState.ensureRuntimeMapsLocked()
+	gatewayState.mu.Unlock()
+	if oldRedisCounters != nil && oldRedisCounters != redisCounters {
+		oldRedisCounters.close()
 	}
-	if gatewayState.requestWindow == nil {
-		gatewayState.requestWindow = make(map[string][]time.Time)
-	}
-	if gatewayState.memberHitTimes == nil {
-		gatewayState.memberHitTimes = make(map[string][]time.Time)
-	}
-	if gatewayState.ruleHitTimes == nil {
-		gatewayState.ruleHitTimes = make(map[string][]time.Time)
-	}
-	if gatewayState.stageHitTimes == nil {
-		gatewayState.stageHitTimes = make(map[string][]time.Time)
-	}
-	return nil
+	return gatewayState.loadPersistentState()
 }
 
 func pluginRegistration() registration {
@@ -77,7 +71,7 @@ func pluginRegistration() registration {
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
 			Name:             "gateway",
-			Version:          "0.1.0",
+			Version:          gatewayPluginVersion,
 			Author:           "router-for-me",
 			GitHubRepository: "https://github.com/router-for-me/CLIProxyAPI",
 			Logo:             "https://raw.githubusercontent.com/router-for-me/CLIProxyAPI/main/docs/logo.png",
@@ -89,6 +83,18 @@ func pluginRegistration() registration {
 				Name:        "key_policies",
 				Type:        pluginapi.ConfigFieldTypeArray,
 				Description: "Per API key gateway policies bound to top-level CPA api-keys.",
+			}, {
+				Name:        "persistence",
+				Type:        pluginapi.ConfigFieldTypeObject,
+				Description: "Optional plugin state persistence settings, including state_path and persist_runtime.",
+			}, {
+				Name:        "cluster",
+				Type:        pluginapi.ConfigFieldTypeObject,
+				Description: "Optional shared counter backend settings. Set backend to redis for multi-instance quota accounting.",
+			}, {
+				Name:        "security",
+				Type:        pluginapi.ConfigFieldTypeObject,
+				Description: "Optional plugin-level read/admin tokens layered on top of host management authentication.",
 			}},
 		},
 		Capabilities: registrationCapability{RequestInterceptor: true, UsagePlugin: true, ManagementAPI: true},
@@ -98,33 +104,34 @@ func pluginRegistration() registration {
 func managementRegistration() pluginapi.ManagementRegistrationResponse {
 	return pluginapi.ManagementRegistrationResponse{
 		Routes: []pluginapi.ManagementRoute{
-			{Method: http.MethodGet, Path: "/plugins/gateway/keys", Handler: managementHandlerFunc(routeKeys)},
-			{Method: http.MethodGet, Path: "/plugins/gateway/policies", Handler: managementHandlerFunc(routePolicies)},
-			{Method: http.MethodPut, Path: "/plugins/gateway/policies", Handler: managementHandlerFunc(routePutPolicies)},
-			{Method: http.MethodGet, Path: "/plugins/gateway/policies/export", Handler: managementHandlerFunc(routeExportPolicies)},
-			{Method: http.MethodPost, Path: "/plugins/gateway/policies/import", Handler: managementHandlerFunc(routeImportPolicies)},
-			{Method: http.MethodPost, Path: "/plugins/gateway/policies/clone", Handler: managementHandlerFunc(routeClonePolicy)},
-			{Method: http.MethodPost, Path: "/plugins/gateway/policies/add", Handler: managementHandlerFunc(routeAddPolicy)},
-			{Method: http.MethodPatch, Path: "/plugins/gateway/policies", Handler: managementHandlerFunc(routePatchPolicy)},
-			{Method: http.MethodDelete, Path: "/plugins/gateway/policies", Handler: managementHandlerFunc(routeDeletePolicy)},
-			{Method: http.MethodPost, Path: "/plugins/gateway/rules/add", Handler: managementHandlerFunc(routeAddRule)},
-			{Method: http.MethodPatch, Path: "/plugins/gateway/rules", Handler: managementHandlerFunc(routePatchRule)},
-			{Method: http.MethodDelete, Path: "/plugins/gateway/rules", Handler: managementHandlerFunc(routeDeleteRule)},
-			{Method: http.MethodPost, Path: "/plugins/gateway/route-members/op", Handler: managementHandlerFunc(routeMemberOperation)},
-			{Method: http.MethodPost, Path: "/plugins/gateway/route-members/preview", Handler: managementHandlerFunc(routeMemberPreview)},
-			{Method: http.MethodGet, Path: "/plugins/gateway/usage", Handler: managementHandlerFunc(routeUsage)},
-			{Method: http.MethodGet, Path: "/plugins/gateway/audit", Handler: managementHandlerFunc(routeAudit)},
-			{Method: http.MethodGet, Path: "/plugins/gateway/audit/detail", Handler: managementHandlerFunc(routeAuditDetail)},
-			{Method: http.MethodGet, Path: "/plugins/gateway/audit/summary", Handler: managementHandlerFunc(routeAuditSummary)},
-			{Method: http.MethodGet, Path: "/plugins/gateway/templates", Handler: managementHandlerFunc(routeTemplates)},
-			{Method: http.MethodPost, Path: "/plugins/gateway/templates", Handler: managementHandlerFunc(routeAddTemplate)},
-			{Method: http.MethodPatch, Path: "/plugins/gateway/templates", Handler: managementHandlerFunc(routePatchTemplate)},
-			{Method: http.MethodDelete, Path: "/plugins/gateway/templates", Handler: managementHandlerFunc(routeDeleteTemplate)},
-			{Method: http.MethodPost, Path: "/plugins/gateway/templates/clone", Handler: managementHandlerFunc(routeCloneTemplate)},
-			{Method: http.MethodGet, Path: "/plugins/gateway/templates/export", Handler: managementHandlerFunc(routeExportTemplates)},
-			{Method: http.MethodPost, Path: "/plugins/gateway/templates/import", Handler: managementHandlerFunc(routeImportTemplates)},
-			{Method: http.MethodPost, Path: "/plugins/gateway/usage/reset", Handler: managementHandlerFunc(routeResetUsage)},
-			{Method: http.MethodPost, Path: "/plugins/gateway/dry-run", Handler: managementHandlerFunc(routeDryRun)},
+			{Method: http.MethodGet, Path: "/plugins/gateway/keys", Handler: managementHandlerFunc(authorizedHandler(roleRead, routeKeys))},
+			{Method: http.MethodGet, Path: "/plugins/gateway/health", Handler: managementHandlerFunc(authorizedHandler(roleRead, routeHealth))},
+			{Method: http.MethodGet, Path: "/plugins/gateway/policies", Handler: managementHandlerFunc(authorizedHandler(roleRead, routePolicies))},
+			{Method: http.MethodPut, Path: "/plugins/gateway/policies", Handler: managementHandlerFunc(authorizedHandler(roleAdmin, routePutPolicies))},
+			{Method: http.MethodGet, Path: "/plugins/gateway/policies/export", Handler: managementHandlerFunc(authorizedHandler(roleRead, routeExportPolicies))},
+			{Method: http.MethodPost, Path: "/plugins/gateway/policies/import", Handler: managementHandlerFunc(authorizedHandler(roleAdmin, routeImportPolicies))},
+			{Method: http.MethodPost, Path: "/plugins/gateway/policies/clone", Handler: managementHandlerFunc(authorizedHandler(roleAdmin, routeClonePolicy))},
+			{Method: http.MethodPost, Path: "/plugins/gateway/policies/add", Handler: managementHandlerFunc(authorizedHandler(roleAdmin, routeAddPolicy))},
+			{Method: http.MethodPatch, Path: "/plugins/gateway/policies", Handler: managementHandlerFunc(authorizedHandler(roleAdmin, routePatchPolicy))},
+			{Method: http.MethodDelete, Path: "/plugins/gateway/policies", Handler: managementHandlerFunc(authorizedHandler(roleAdmin, routeDeletePolicy))},
+			{Method: http.MethodPost, Path: "/plugins/gateway/rules/add", Handler: managementHandlerFunc(authorizedHandler(roleAdmin, routeAddRule))},
+			{Method: http.MethodPatch, Path: "/plugins/gateway/rules", Handler: managementHandlerFunc(authorizedHandler(roleAdmin, routePatchRule))},
+			{Method: http.MethodDelete, Path: "/plugins/gateway/rules", Handler: managementHandlerFunc(authorizedHandler(roleAdmin, routeDeleteRule))},
+			{Method: http.MethodPost, Path: "/plugins/gateway/route-members/op", Handler: managementHandlerFunc(authorizedHandler(roleAdmin, routeMemberOperation))},
+			{Method: http.MethodPost, Path: "/plugins/gateway/route-members/preview", Handler: managementHandlerFunc(authorizedHandler(roleRead, routeMemberPreview))},
+			{Method: http.MethodGet, Path: "/plugins/gateway/usage", Handler: managementHandlerFunc(authorizedHandler(roleRead, routeUsage))},
+			{Method: http.MethodGet, Path: "/plugins/gateway/audit", Handler: managementHandlerFunc(authorizedHandler(roleRead, routeAudit))},
+			{Method: http.MethodGet, Path: "/plugins/gateway/audit/detail", Handler: managementHandlerFunc(authorizedHandler(roleRead, routeAuditDetail))},
+			{Method: http.MethodGet, Path: "/plugins/gateway/audit/summary", Handler: managementHandlerFunc(authorizedHandler(roleRead, routeAuditSummary))},
+			{Method: http.MethodGet, Path: "/plugins/gateway/templates", Handler: managementHandlerFunc(authorizedHandler(roleRead, routeTemplates))},
+			{Method: http.MethodPost, Path: "/plugins/gateway/templates", Handler: managementHandlerFunc(authorizedHandler(roleAdmin, routeAddTemplate))},
+			{Method: http.MethodPatch, Path: "/plugins/gateway/templates", Handler: managementHandlerFunc(authorizedHandler(roleAdmin, routePatchTemplate))},
+			{Method: http.MethodDelete, Path: "/plugins/gateway/templates", Handler: managementHandlerFunc(authorizedHandler(roleAdmin, routeDeleteTemplate))},
+			{Method: http.MethodPost, Path: "/plugins/gateway/templates/clone", Handler: managementHandlerFunc(authorizedHandler(roleAdmin, routeCloneTemplate))},
+			{Method: http.MethodGet, Path: "/plugins/gateway/templates/export", Handler: managementHandlerFunc(authorizedHandler(roleRead, routeExportTemplates))},
+			{Method: http.MethodPost, Path: "/plugins/gateway/templates/import", Handler: managementHandlerFunc(authorizedHandler(roleAdmin, routeImportTemplates))},
+			{Method: http.MethodPost, Path: "/plugins/gateway/usage/reset", Handler: managementHandlerFunc(authorizedHandler(roleAdmin, routeResetUsage))},
+			{Method: http.MethodPost, Path: "/plugins/gateway/dry-run", Handler: managementHandlerFunc(authorizedHandler(roleRead, routeDryRun))},
 		},
 		Resources: []pluginapi.ResourceRoute{{
 			Path:        "/ui",
