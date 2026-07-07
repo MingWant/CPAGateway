@@ -23,6 +23,7 @@ textarea{min-height:110px;resize:vertical;font-family:ui-monospace,Consolas,mono
 pre{margin:0;padding:14px;border-radius:16px;background:#152126;color:#d9f6f2;overflow:auto;max-height:420px}.stats{display:grid;gap:10px}.stat{padding:12px;border:1px solid #ddd0bc;border-radius:16px;background:#fff}.stat b{display:block;font-size:24px;margin-top:4px}
 .section-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:10px 0 8px}.section-title h3{margin:0}.rule-builder,.group-board,.route-board{display:grid;gap:12px}.mini-card{padding:12px;border:1px solid #ddd0bc;border-radius:16px;background:#fffdf9}.mini-card h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.chips{display:flex;flex-wrap:wrap;gap:8px}.chip{display:inline-flex;align-items:center;border-radius:999px;padding:6px 10px;background:#efe7da;color:#5d4d35;font-size:12px}.rowline{display:flex;flex-wrap:wrap;gap:8px}.split{display:grid;grid-template-columns:1.2fr .8fr;gap:12px}.mono{font-family:ui-monospace,Consolas,monospace}.soft{background:#f7f1e7}.tablelist{display:grid;gap:8px}.tableitem{display:grid;grid-template-columns:1.2fr .7fr auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid #ddd0bc;border-radius:14px;background:#fff}.tableitem b{font-size:13px}.tableitem span{font-size:12px;color:var(--muted)}.topology-flow{display:grid;gap:10px}.topology-policy{display:grid;gap:10px;padding:12px;border:1px solid #d7ccbb;border-radius:18px;background:linear-gradient(180deg,#fffdf9,#f9f3e7)}.topology-policy.active{box-shadow:0 0 0 3px rgba(15,118,110,.22);border-color:#0f766e}.topology-stage{display:grid;gap:8px;padding-left:18px;border-left:2px solid #d6c8af}.topology-stage.active{border-left-color:#0f766e;background:rgba(15,118,110,.04);border-radius:14px;padding:8px 0 8px 18px}.topology-rule{display:grid;gap:6px;padding-left:20px;position:relative}.topology-rule.active .item{border-color:#0f766e;box-shadow:0 0 0 3px rgba(15,118,110,.18);background:#fffdf8}.topology-rule.preview-focus .item{border-color:#a16207;box-shadow:0 0 0 3px rgba(161,98,7,.18);background:#fff8ef}.topology-rule.preview-focus .node-detail{border-color:#a16207;background:#fff8ef}.topology-rule::before{content:"";position:absolute;left:6px;top:8px;width:8px;height:8px;border-radius:999px;background:#0f766e}.flow-arrow{font-size:11px;color:var(--muted);padding-left:6px}.node-detail{margin-top:8px;padding:10px 12px;border:1px dashed #d7ccbb;border-radius:14px;background:linear-gradient(180deg,#fffdf9,#fff7ee);box-shadow:inset 0 1px 0 rgba(255,255,255,.55)}.node-detail b{display:block;font-size:12px;color:var(--ink);margin-bottom:6px}.node-detail span{display:block;font-size:11px;color:var(--muted);line-height:1.5}.node-detail .actions{margin-top:8px}.subnode-list{display:grid;gap:6px;margin-top:8px}.subnode{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border:1px solid #ddd0bc;border-radius:12px;background:#fff}.subnode strong{font-size:12px}.subnode .hint{display:block}.subnode.focused{border-color:#a16207;box-shadow:0 0 0 2px rgba(161,98,7,.18);background:#fff7e8}.subnode.route{border-left:4px solid #0f766e}.subnode.failover{border-left:4px solid #a16207}.subnode.mirror{border-left:4px solid #2563eb}
 @media (max-width:1050px){.layout,.grid2,.grid3,.grid4,.split{grid-template-columns:1fr}.hero h1{font-size:28px}}
+.wrap{max-width:1480px;padding:28px 22px 56px}.hero{position:relative;overflow:hidden;margin-bottom:22px;padding:24px;border:1px solid rgba(24,38,42,.1);border-radius:32px;background:linear-gradient(135deg,rgba(255,250,242,.92),rgba(236,246,242,.72));box-shadow:0 24px 70px rgba(72,55,27,.10)}.hero::after{content:"";position:absolute;right:-80px;top:-90px;width:300px;height:300px;border-radius:999px;background:radial-gradient(circle,rgba(15,118,110,.20),rgba(15,118,110,0) 68%);pointer-events:none}.hero h1{letter-spacing:-.04em}.hero>.card{position:relative;z-index:1;background:rgba(255,253,249,.82);backdrop-filter:blur(12px);box-shadow:none}.layout.tab-shell{display:grid;grid-template-columns:1fr;gap:18px}.tab-nav{position:relative;z-index:1;display:flex;flex-wrap:wrap;gap:8px;padding:8px;border:1px solid rgba(24,38,42,.10);border-radius:24px;background:rgba(255,253,249,.72);box-shadow:0 16px 44px rgba(72,55,27,.08);backdrop-filter:blur(14px)}.tab-button{display:grid;gap:2px;align-content:center;min-height:58px;padding:10px 16px;border:1px solid transparent;border-radius:18px;background:transparent;color:var(--ink);text-align:left}.tab-button b{font-size:14px;letter-spacing:-.01em}.tab-button span{font-size:11px;color:var(--muted);font-weight:500}.tab-button.active{background:#122225;color:#fff;box-shadow:0 12px 28px rgba(18,34,37,.18)}.tab-button.active span{color:#bdd4cf}.tab-content{display:grid;gap:18px}.tab-pane{display:none;grid-template-columns:minmax(0,1fr);gap:18px}.tab-pane.active{display:grid}.tab-pane>.card{position:static!important;top:auto!important;z-index:auto!important}.tab-pane[data-columns="2"].active{grid-template-columns:minmax(280px,.8fr) minmax(0,1.4fr);align-items:start}.tab-pane[data-columns="audit"].active{grid-template-columns:minmax(260px,.75fr) minmax(0,1.25fr);align-items:start}.card{border-radius:24px;background:rgba(255,253,249,.92);box-shadow:0 18px 48px rgba(72,55,27,.08)}.card h2{display:flex;align-items:center;gap:10px;margin-bottom:14px;font-size:18px;letter-spacing:-.02em}.card h2::before{content:"";width:10px;height:10px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 6px rgba(15,118,110,.10)}.actions{align-items:center;gap:8px;margin:12px 0;padding:8px;border:1px solid rgba(24,38,42,.07);border-radius:18px;background:rgba(239,231,218,.38)}button{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:9px 14px;border:1px solid rgba(24,38,42,.08);box-shadow:0 7px 18px rgba(24,38,42,.08);white-space:nowrap;transition:transform .14s ease,box-shadow .14s ease,background .14s ease}button:hover{transform:translateY(-1px);box-shadow:0 11px 24px rgba(24,38,42,.12)}button.alt{background:#0f766e}button.warn{background:#b66b0d}button.danger{background:#b42318}.grid2,.grid3,.grid4,.split{align-items:start}label{min-width:0}.item,.mini-card,.stat,.tableitem,.subnode{box-shadow:0 8px 22px rgba(72,55,27,.04)}pre{max-height:360px;border:1px solid rgba(255,255,255,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}#currentNodeDetail{position:static!important}.management-card{display:grid;gap:10px}.management-row{display:grid;grid-template-columns:minmax(260px,1fr) minmax(180px,.42fr);gap:12px}.context-card{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px}.context-card strong{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}@media (max-width:1050px){.wrap{padding:18px 12px 42px}.hero{padding:18px;border-radius:24px}.tab-nav{overflow-x:auto;flex-wrap:nowrap}.tab-button{min-width:170px}.tab-pane[data-columns="2"].active,.tab-pane[data-columns="audit"].active,.management-row{grid-template-columns:1fr}.actions{overflow-x:auto;flex-wrap:nowrap;justify-content:flex-start}}
 </style>
 </head>
 <body>
@@ -30,16 +31,16 @@ pre{margin:0;padding:14px;border-radius:16px;background:#152126;color:#d9f6f2;ov
   <section class="hero">
     <h1>Gateway Manager</h1>
     <p>Manage per-key gateway routing, model rewrite rules, daily limits, minute rate limits, and dry-run checks for CPA top-level API keys.</p>
-    <div class="card" style="padding:14px 16px;border-radius:18px">
+    <div class="card management-card" style="padding:14px 16px;border-radius:18px">
       <h2 style="margin:0 0 10px">Management Access</h2>
       <p class="hint" style="margin-top:0">Enter the CPAMC management key before connecting. The key is kept in this browser session only and is sent as management authentication headers.</p>
-      <div class="grid2">
+      <div class="management-row">
         <label>CPAMC Management Key<input id="managementKeyInput" type="password" autocomplete="current-password" placeholder="management secret-key"></label>
         <label>Status<input id="managementAuthStatus" readonly value="Not connected"></label>
       </div>
       <div class="actions"><button class="alt" id="connectManagementBtn">Connect / Refresh</button><button id="saveManagementKeyBtn">Save For Session</button><button class="danger" id="clearManagementKeyBtn">Clear Key</button></div>
     </div>
-    <div class="card" style="padding:12px 16px;border-radius:18px;position:sticky;top:12px;z-index:2"><strong>Current Context</strong><div id="contextBreadcrumb" class="hint">window 1h | no policy selected</div></div>
+    <div class="card context-card" style="padding:12px 16px;border-radius:18px"><strong>Current Context</strong><div id="contextBreadcrumb" class="hint">window 1h | no policy selected</div></div>
   </section>
   <section class="layout">
     <aside class="stack">
@@ -264,6 +265,95 @@ function appendButton(parent, className, text, onClick){
   return button;
 }
 function emptyNode(className, text){ return textNode('div', className, text); }
+function cardTitle(card){ return (card?.querySelector('h2')?.textContent || '').trim(); }
+function buildTabbedLayout(){
+  const layout = document.querySelector('.layout');
+  if(!layout || layout.classList.contains('tab-shell')) return;
+  const stacks = Array.from(layout.children).filter(node => node.classList && node.classList.contains('stack'));
+  const cards = [];
+  stacks.forEach(stack => {
+    Array.from(stack.children).forEach(child => {
+      if(child.matches && child.matches('article.card')) cards.push(child);
+    });
+  });
+  if(!cards.length) return;
+  const byTitle = new Map();
+  cards.forEach(card => {
+    const title = cardTitle(card);
+    if(title && !byTitle.has(title)) byTitle.set(title, card);
+  });
+  const groups = [
+    { id: 'dashboard', label: 'Dashboard', hint: 'keys, health, activity', columns: '2', titles: ['Configured Keys', 'Diagnostics', 'Activity', 'Guide'] },
+    { id: 'traffic', label: 'Traffic', hint: 'usage, topology, node', columns: '2', titles: ['Usage Snapshot', 'Current Node'] },
+    { id: 'policies', label: 'Policies', hint: 'limits, rules, JSON', columns: '', titles: ['Selected Policy', 'Advanced JSON'] },
+    { id: 'audit', label: 'Audit', hint: 'events and evidence', columns: 'audit', titles: ['Audit Summary', 'Audit Log', 'Audit Detail'] },
+    { id: 'dryrun', label: 'Dry Run', hint: 'simulate routing', columns: '', titles: ['Dry Run'] }
+  ];
+  const used = new Set();
+  const nav = document.createElement('nav');
+  nav.className = 'tab-nav';
+  nav.setAttribute('aria-label', 'Gateway management sections');
+  const content = document.createElement('div');
+  content.className = 'tab-content';
+  function activateTab(id){
+    nav.querySelectorAll('.tab-button').forEach(button => {
+      const active = button.dataset.tabTarget === id;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    content.querySelectorAll('.tab-pane').forEach(pane => pane.classList.toggle('active', pane.id === 'gateway-tab-' + id));
+    try { window.sessionStorage.setItem('gateway-active-tab', id); } catch {}
+  }
+  groups.forEach(group => {
+    const pane = document.createElement('section');
+    pane.className = 'tab-pane';
+    pane.id = 'gateway-tab-' + group.id;
+    pane.setAttribute('role', 'tabpanel');
+    if(group.columns) pane.dataset.columns = group.columns;
+    group.titles.forEach(title => {
+      const card = byTitle.get(title);
+      if(!card) return;
+      if(title === 'Current Node') card.removeAttribute('style');
+      card.dataset.gatewaySection = group.id;
+      pane.appendChild(card);
+      used.add(card);
+    });
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'tab-button';
+    button.dataset.tabTarget = group.id;
+    button.setAttribute('role', 'tab');
+    appendText(button, 'b', '', group.label);
+    appendText(button, 'span', '', group.hint);
+    button.addEventListener('click', () => activateTab(group.id));
+    nav.appendChild(button);
+    content.appendChild(pane);
+  });
+  const leftovers = cards.filter(card => !used.has(card));
+  if(leftovers.length){
+    const pane = document.createElement('section');
+    pane.className = 'tab-pane';
+    pane.id = 'gateway-tab-more';
+    pane.setAttribute('role', 'tabpanel');
+    leftovers.forEach(card => pane.appendChild(card));
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'tab-button';
+    button.dataset.tabTarget = 'more';
+    button.setAttribute('role', 'tab');
+    appendText(button, 'b', '', 'More');
+    appendText(button, 'span', '', 'extra panels');
+    button.addEventListener('click', () => activateTab('more'));
+    nav.appendChild(button);
+    content.appendChild(pane);
+  }
+  layout.className = 'layout tab-shell';
+  layout.replaceChildren(nav, content);
+  let initial = 'dashboard';
+  try { initial = window.sessionStorage.getItem('gateway-active-tab') || initial; } catch {}
+  if(!content.querySelector('#gateway-tab-' + initial)) initial = 'dashboard';
+  activateTab(initial);
+}
 function appendStat(parent, label, value){
   const node = document.createElement('div');
   node.className = 'stat';
@@ -1971,6 +2061,7 @@ el('poolShiftProviderBtn').addEventListener('click', async () => {
   } catch(err){ log(err.message || 'Shift provider failed.', 'bad'); }
 });
 
+buildTabbedLayout();
 initManagementAccess();
 </script>
 </body>
